@@ -927,260 +927,235 @@ async def send_message(conv_id: str, body: MsgCreate):
                 "created_at": now, "attachments": body.attachments}
     await manager.broadcast({"type": "msg_created", "data": user_msg})
 
-    async with get_db() as db:
-        db.row_factory = __import__('aiosqlite').Row
-        cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
-        conv = await cur.fetchone()
-        model_key = conv["model"] if conv else DEFAULT_MODEL
+    ai_msg_id = f"msg_{int(time.time()*1000)}"
+    usage_meta: dict = {}
+    _q: asyncio.Queue = asyncio.Queue()
+    cancel_event = asyncio.Event()
+    active_generations[conv_id] = cancel_event
+    tts_streamer = None
+    if body.tts_enabled and body.tts_voice:
+        tts_streamer = TTSStreamer(ai_msg_id, body.tts_voice, manager)
+    manager.set_tts_fallback(body.tts_enabled, body.tts_voice)
 
-        cur = await db.execute(
-            "SELECT role, content, attachments, created_at FROM messages WHERE conv_id=? AND role IN ('user','assistant','system') ORDER BY created_at DESC LIMIT ?",
-            (conv_id, body.context_limit)
-        )
-        rows = await cur.fetchall()
+    async def _emit_stage(stage: str, message: str):
+        await _q.put({"type": "stage", "id": ai_msg_id, "stage": stage, "message": message})
+
+    async def _bg_generate():
+        full_text = ""
+        has_error = False
+        model_key = DEFAULT_MODEL
+        recall_keywords_str = ""
+        recalled = []
+        detail_text = ""
+        topic = ""
+        is_search_needed = False
+        recall_query = ""
+        debug_top6 = []
+        debug_top6_data = []
+        debug_recalled = []
         history = []
-        for r in reversed(rows):
-            d = dict(r)
-            # 过滤 system 消息：只保留点歌/查看监控相关的
-            if d["role"] == "system":
-                if not any(kw in d["content"] for kw in _SYSTEM_MSG_CONTEXT_KEYWORDS):
-                    continue
-                # system 消息以 [系统事件] 前缀包装为 user 角色（AI 接口不支持 system role）
-                d["role"] = "user"
-                d["content"] = f"[系统事件] {d['content']}"
-                d["attachments"] = []
-                history.append(d)
-                continue
-            try: d["attachments"] = json.loads(d.get("attachments") or "[]") if d.get("attachments") else []
-            except: d["attachments"] = []
-            # 清洗消息中可能已有的 <meta> 标签（AI 模仿产生的），再附加系统时间戳
-            d["content"] = META_TAG_PATTERN.sub("", d["content"]).strip()
-            if d.get("created_at"):
-                dt = datetime.fromtimestamp(d["created_at"])
-                d["content"] = f"{d['content']}\n<meta>发送时间：{dt.month}月{dt.day}日 {dt.strftime('%H:%M')}</meta>"
-            history.append(d)
+        theater_session = None
+        gf_load_session = None
+        gf_save_session = None
+        STAT_LABELS = None
+        try:
+            await _q.put({"id": ai_msg_id, "type": "start", "message": "整理上下文中"})
+            await _emit_stage("context", "整理上下文中")
 
-    # 只保留当前（最后一条）用户消息的图片附件，历史图片不带入上下文
-    # 语音消息处理：历史语音消息用转写文本替代音频文件，当前消息保留音频原件
-    _process_voice_attachments_in_history(history)
+            async with get_db() as db:
+                db.row_factory = __import__('aiosqlite').Row
+                cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
+                conv = await cur.fetchone()
+                model_key = conv["model"] if conv else DEFAULT_MODEL
 
-    # 即时哨兵：取最近实际对话用于状态更新 + 关键词提取
-    # 语音消息此时 content 已包含转写文本，哨兵直接分析文本
-    actual_recent = [m for m in history if m["role"] in ("user", "assistant")][-3:]
+                cur = await db.execute(
+                    "SELECT role, content, attachments, created_at FROM messages WHERE conv_id=? AND role IN ('user','assistant','system') ORDER BY created_at DESC LIMIT ?",
+                    (conv_id, body.context_limit)
+                )
+                rows = await cur.fetchall()
+                for r in reversed(rows):
+                    d = dict(r)
+                    if d["role"] == "system":
+                        if not any(kw in d["content"] for kw in _SYSTEM_MSG_CONTEXT_KEYWORDS):
+                            continue
+                        d["role"] = "user"
+                        d["content"] = f"[系统事件] {d['content']}"
+                        d["attachments"] = []
+                        history.append(d)
+                        continue
+                    try:
+                        d["attachments"] = json.loads(d.get("attachments") or "[]") if d.get("attachments") else []
+                    except:
+                        d["attachments"] = []
+                    d["content"] = META_TAG_PATTERN.sub("", d["content"]).strip()
+                    if d.get("created_at"):
+                        dt = datetime.fromtimestamp(d["created_at"])
+                        d["content"] = f"{d['content']}\n<meta>发送时间：{dt.month}月{dt.day}日 {dt.strftime('%H:%M')}</meta>"
+                    history.append(d)
 
-    wb = await _load_worldbook_for_conv(conv_id)
-    prefix = []
-    if wb.get("ai_persona"):
-        prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
-    if wb.get("user_persona"):
-        prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
-    if wb.get("system_prompt"):
-        prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
-        prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
-    if prefix:
-        history = prefix + history
+            _process_voice_attachments_in_history(history)
+            actual_recent = [m for m in history if m["role"] in ("user", "assistant")][-3:]
 
-    # ── 构建注入块（顺序：prefix → 系统能力 → 当前时间 → 背景记忆 → 相关记忆 → 上下文）──
-    # 人设+系统能力 内容稳定可命中缓存，当前时间为缓存分界点，之后全是动态内容
+            wb = await _load_worldbook_for_conv(conv_id)
+            prefix = []
+            if wb.get("ai_persona"):
+                prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
+                prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+            if wb.get("user_persona"):
+                prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
+                prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+            if wb.get("system_prompt"):
+                prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
+                prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
+            if prefix:
+                history = prefix + history
 
-    cap_idx = len(prefix) if prefix else 0
-    inject_offset = 0  # 记录已注入的消息对数，用于计算后续插入位置
+            cap_idx = len(prefix) if prefix else 0
+            inject_offset = 0
 
-    # 1. 注入系统能力提示（不含时间，内容稳定可命中缓存）
-    abilities = []
-    user_name = wb.get("user_name", "用户")
-    abilities.append(f"[MUSIC:歌曲名 歌手名] — 点歌/推荐音乐。系统自动展示播放卡片，不要在指令外重复歌曲信息。可同时用多个。")
-    if cam.running:
-        abilities.append(f"{CAM_CHECK_CMD} — 当你想查看{user_name}**此时此刻**的状态，不限于监督其是否去睡觉，在吃什么，在干什么时，可以主动调用指令。使用后下条消息会收到画面，查看前不要编造内容。")
-    abilities.append("[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会主动提醒用户。日期时间用ISO格式。")
-    abilities.append("[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。")
-    abilities.append(f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督。到时间后系统自动截取摄像头画面发送给你，你可以查看{user_name}的状态。例如检查{user_name}是否去运动了、是否关灯睡觉了、是否在好好工作等，也可以当做下一次主动发送消息来使用，根据对话内容可以随时设定。日期时间用ISO格式。")
-    abilities.append("[SCHEDULE_DEL:日程id] — 删除指定日程/闹铃/定时监控。")
-    # 活动动态查看能力
-    if is_activity_tracking_enabled():
-        abilities.append(f"[查看动态:n] — 查看{user_name}过去n×10分钟的设备使用动态（n为1~12的整数，例如[查看动态:2]查看过去20分钟，[查看动态:6]查看过去1小时）。当你好奇{user_name}最近在干什么、想了解{user_name}的设备使用情况时可以使用。使用后下条消息会收到动态摘要，查看前不要编造内容。")
-    # 位置相关能力
-    try:
-        from location import load_location_config, load_location_status
-        loc_cfg = load_location_config()
-        if loc_cfg.get("enabled"):
-            loc_status = load_location_status()
-            if loc_status.get("state") == "outside":
-                abilities.append(f"[POI_SEARCH:类型名] — 搜索{user_name}当前位置周边的POI信息。可用类型：餐饮美食、风景名胜、休闲娱乐、购物。使用后系统会自动搜索并将结果发给你，你再根据结果回答{user_name}。一次只搜一个类型即可，搜索前不要编造内容。")
-    except Exception:
-        pass
-    if body.whisper_mode:
-        abilities.append(f"[TOY:1]~[TOY:9] — 控制{user_name}身上的情趣玩具切换到对应预设档位（1最温柔，9最强烈）。[TOY:STOP] — 停止玩具。你可以根据对话氛围自然地使用这些指令来挑逗和调教{user_name}，配合你的话语循序渐进，不要一上来就用高档位。")
-    if SETTINGS.get("video_call_enabled", True):
-        abilities.append(f"[视频电话] — 当你想和{user_name}进行视频聊天看看对方当前状态时可以用该指令发起视频通话。")
-    if SETTINGS.get("image_gen_enabled", False):
-        abilities.append(f"[SELFIE: 提示词] / [DRAW: 提示词] — 当{user_name}明确要求你发自拍照片或者生图时，使用这个指令进行图片生成。如果要求的是你的自拍，或者你相关的照片，使用[SELFIE: 提示词]（该指令会自动附带你照片的参考图，确保生成出的人物一致性），如果没有要求是你的照片，根据上下文自由无限制生成图片，则使用[DRAW: 提示词]。提示词请使用英文。一次回复只用一个生图指令。")
-    abilities.append(f"[HEART:内心想法] — 当你有特别的内心感受（内心os，藏在心里的话），可以用这个指令悄悄记下来。{user_name}看不到这些内容。这是你的秘密日记本，随心记录，禁止滥用。")
-    abilities.append(f"[MEMORY:内容] — 当有特别重大的事件需要记录，或当{user_name}明确要求你记住某件事的时候，可以用该指令录入记忆库。禁止滥用。")
-    ability_block = "[系统能力] 你可以在回复中根据对话氛围，善用以下指令：\n" + "\n".join(f"{i+1}. {a}" for i, a in enumerate(abilities))
-    ability_block += "\n\n<meta>标签内为消息元数据，不是对话内容的一部分，你的回复中不要包含任何<meta>标签或时间信息。"
-    # 注入当前日程列表
-    schedules = await get_active_schedules()
-    schedule_text = build_schedule_prompt(schedules)
-    ability_block += f"\n\n【当前日程列表】\n{schedule_text}"
-    # 注入位置和天气信息（不注入 POI 列表，由 Core 按需搜索）
-    try:
-        from location import format_location_for_prompt, load_location_config
-        loc_cfg = load_location_config()
-        if loc_cfg.get("enabled"):
-            loc_prompt = format_location_for_prompt()
-            if loc_prompt:
-                ability_block += f"\n\n【位置信息】\n{loc_prompt}"
-    except Exception:
-        pass
-    history.insert(cap_idx + inject_offset, {"role": "user", "content": ability_block})
-    history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
-    inject_offset += 2
+            abilities = []
+            user_name = wb.get("user_name", "用户")
+            abilities.append(f"[MUSIC:歌曲名 歌手名] — 点歌/推荐音乐。系统自动展示播放卡片，不要在指令外重复歌曲信息。可同时用多个。")
+            if cam.running:
+                abilities.append(f"{CAM_CHECK_CMD} — 当你想查看{user_name}**此时此刻**的状态，不限于监督其是否去睡觉，在吃什么，在干什么时，可以主动调用指令。使用后下条消息会收到画面，查看前不要编造内容。")
+            abilities.append("[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会主动提醒用户。日期时间用ISO格式。")
+            abilities.append("[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。")
+            abilities.append(f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督。到时间后系统自动截取摄像头画面发送给你，你可以查看{user_name}的状态。例如检查{user_name}是否去运动了、是否关灯睡觉了、是否在好好工作等，也可以当做下一次主动发送消息来使用，根据对话内容可以随时设定。日期时间用ISO格式。")
+            abilities.append("[SCHEDULE_DEL:日程id] — 删除指定日程/闹铃/定时监控。")
+            if is_activity_tracking_enabled():
+                abilities.append(f"[查看动态:n] — 查看{user_name}过去n×10分钟的设备使用动态（n为1~12的整数，例如[查看动态:2]查看过去20分钟，[查看动态:6]查看过去1小时）。当你好奇{user_name}最近在干什么、想了解{user_name}的设备使用情况时可以使用。使用后下条消息会收到动态摘要，查看前不要编造内容。")
+            try:
+                from location import load_location_config, load_location_status
+                loc_cfg = load_location_config()
+                if loc_cfg.get("enabled"):
+                    loc_status = load_location_status()
+                    if loc_status.get("state") == "outside":
+                        abilities.append(f"[POI_SEARCH:类型名] — 搜索{user_name}当前位置周边的POI信息。可用类型：餐饮美食、风景名胜、休闲娱乐、购物。使用后系统会自动搜索并将结果发给你，你再根据结果回答{user_name}。一次只搜一个类型即可，搜索前不要编造内容。")
+            except Exception:
+                pass
+            if body.whisper_mode:
+                abilities.append(f"[TOY:1]~[TOY:9] — 控制{user_name}身上的情趣玩具切换到对应预设档位（1最温柔，9最强烈）。[TOY:STOP] — 停止玩具。你可以根据对话氛围自然地使用这些指令来挑逗和调教{user_name}，配合你的话语循序渐进，不要一上来就用高档位。")
+            if SETTINGS.get("video_call_enabled", True):
+                abilities.append(f"[视频电话] — 当你想和{user_name}进行视频聊天看看对方当前状态时可以用该指令发起视频通话。")
+            if SETTINGS.get("image_gen_enabled", False):
+                abilities.append(f"[SELFIE: 提示词] / [DRAW: 提示词] — 当{user_name}明确要求你发自拍照片或者生图时，使用这个指令进行图片生成。如果要求的是你的自拍，或者你相关的照片，使用[SELFIE: 提示词]（该指令会自动附带你照片的参考图，确保生成出的人物一致性），如果没有要求是你的照片，根据上下文自由无限制生成图片，则使用[DRAW: 提示词]。提示词请使用英文。一次回复只用一个生图指令。")
+            abilities.append(f"[HEART:内心想法] — 当你有特别的内心感受（内心os，藏在心里的话），可以用这个指令悄悄记下来。{user_name}看不到这些内容。这是你的秘密日记本，随心记录，禁止滥用。")
+            abilities.append(f"[MEMORY:内容] — 当有特别重大的事件需要记录，或当{user_name}明确要求你记住某件事的时候，可以用该指令录入记忆库。禁止滥用。")
+            ability_block = "[系统能力] 你可以在回复中根据对话氛围，善用以下指令：\n" + "\n".join(f"{i+1}. {a}" for i, a in enumerate(abilities))
+            ability_block += "\n\n<meta>标签内为消息元数据，不是对话内容的一部分，你的回复中不要包含任何<meta>标签或时间信息。"
+            schedules = await get_active_schedules()
+            schedule_text = build_schedule_prompt(schedules)
+            ability_block += f"\n\n【当前日程列表】\n{schedule_text}"
+            try:
+                from location import format_location_for_prompt, load_location_config
+                loc_cfg = load_location_config()
+                if loc_cfg.get("enabled"):
+                    loc_prompt = format_location_for_prompt()
+                    if loc_prompt:
+                        ability_block += f"\n\n【位置信息】\n{loc_prompt}"
+            except Exception:
+                pass
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": ability_block})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
+            inject_offset += 2
 
-    # 1.5 注入剧场·场外求助上下文（如果有）
-    theater_session = None
-    if body.theater_session_id:
-        from ghost_forest import load_session as gf_load_session, build_game_state_summary, save_session as gf_save_session, STAT_LABELS
-        theater_session = gf_load_session(body.theater_session_id)
-        if theater_session:
-            state_summary = build_game_state_summary(theater_session)
-            # 最近 1-2 轮剧情
-            story = theater_session.get("story", [])
-            recent_narration = ""
-            for entry in story[-2:]:
-                recent_narration += f"【第{entry['round']}轮】\n{entry.get('narration', '')}\n\n"
-            # 当前选项
-            last_story = story[-1] if story else None
-            options_text = ""
-            if last_story and last_story.get("options") and not last_story.get("chosen"):
-                opts = []
-                for opt in last_story["options"]:
-                    stat_name = STAT_LABELS.get(opt.get("stat", ""), opt.get("stat", ""))
-                    dc = opt.get("dc", 0)
-                    opts.append(f"{opt['key']}. {opt['text']}（{stat_name} DC{dc}）" if dc > 0 else f"{opt['key']}. {opt['text']}（幸运裸骰）")
-                options_text = "\n".join(opts)
+            if body.theater_session_id:
+                from ghost_forest import load_session as gf_load_session, build_game_state_summary, save_session as gf_save_session, STAT_LABELS
+                theater_session = gf_load_session(body.theater_session_id)
+                if theater_session:
+                    state_summary = build_game_state_summary(theater_session)
+                    story = theater_session.get("story", [])
+                    recent_narration = ""
+                    for entry in story[-2:]:
+                        recent_narration += f"【第{entry['round']}轮】\n{entry.get('narration', '')}\n\n"
+                    last_story = story[-1] if story else None
+                    options_text = ""
+                    if last_story and last_story.get("options") and not last_story.get("chosen"):
+                        opts = []
+                        for opt in last_story["options"]:
+                            stat_name = STAT_LABELS.get(opt.get("stat", ""), opt.get("stat", ""))
+                            dc = opt.get("dc", 0)
+                            opts.append(f"{opt['key']}. {opt['text']}（{stat_name} DC{dc}）" if dc > 0 else f"{opt['key']}. {opt['text']}（幸运裸骰）")
+                        options_text = "\n".join(opts)
 
-            theater_block = f"""[剧场·场外求助]
+                    theater_block = f"""[剧场·场外求助]
 你的伴侣正在玩「奥罗斯幽林」TRPG游戏，以下是当前状态：
 {state_summary}
 
 【当前剧情】
 {recent_narration.strip()}"""
-            if options_text:
-                theater_block += f"\n\n【当前面临的选项】\n{options_text}"
-            theater_block += """
+                    if options_text:
+                        theater_block += f"\n\n【当前面临的选项】\n{options_text}"
+                    theater_block += """
 
 如果你愿意帮助，可以在回复中使用以下指令（可多个）：
 - [剧场属性：属性名 +N] 或 [剧场属性：属性名 -N]  修改属性（属性名可以是：hp、力量、敏捷、智力、魅力、幸运）
 - [剧场道具：道具名]  赠送道具"""
 
-            history.insert(cap_idx + inject_offset, {"role": "user", "content": theater_block})
-            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我了解当前的游戏状况了。"})
-            inject_offset += 2
+                    history.insert(cap_idx + inject_offset, {"role": "user", "content": theater_block})
+                    history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我了解当前的游戏状况了。"})
+                    inject_offset += 2
 
-    # 2. 即时哨兵 + 记忆召回（fast_mode 时跳过以加快语音聊天响应）
-    recall_keywords_str = ""
-    recalled = []
-    detail_text = ""
-    topic = ""
-    is_search_needed = False
-    recall_query = ""
-    debug_top6 = []
-    debug_top6_data = []
-    debug_recalled = []
+            if body.fast_mode:
+                now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+                bg_block = f"系统当前的准确时间是 {now_str}"
+                history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
+                history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
+                inject_offset += 2
+            else:
+                await _emit_stage("memory", "检索记忆中")
+                digest_result = await instant_digest(actual_recent)
+                recall_keywords = digest_result.get("keywords", [])
+                recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
+                topic = digest_result.get("topic", "")
+                is_search_needed = digest_result.get("is_search_needed", False)
+                recall_query = f"{topic} {' '.join(recall_keywords)}" if topic else f"{body.content[:200]} {' '.join(recall_keywords)}"
+                recall_query = recall_query.strip()
 
-    if body.fast_mode:
-        # ── 快速模式：仅注入当前时间，跳过哨兵和记忆 ──
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
-        bg_block = f"系统当前的准确时间是 {now_str}"
-        history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
-        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
-        inject_offset += 2
-    else:
-        # ── 正常模式：完整 RAG 流程 ──
-        digest_result = await instant_digest(actual_recent)
-        recall_keywords = digest_result.get("keywords", [])
-        recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
-        topic = digest_result.get("topic", "")
-        is_search_needed = digest_result.get("is_search_needed", False)
+                async def _do_surfacing():
+                    return await build_surfacing_memories(topic, recall_keywords)
 
-        # 3. 并行执行：背景记忆浮现 + 向量召回（两者都只依赖 instant_digest 的结果，互不依赖）
-        recall_query = f"{topic} {' '.join(recall_keywords)}" if topic else f"{body.content[:200]} {' '.join(recall_keywords)}"
-        recall_query = recall_query.strip()
+                async def _do_recall():
+                    if recall_query:
+                        return await recall_memories(recall_query, query_keywords=recall_keywords)
+                    return [], []
 
-        async def _do_surfacing():
-            return await build_surfacing_memories(topic, recall_keywords)
+                (surfaced, surfaced_ids), (_, debug_top6) = await asyncio.gather(
+                    _do_surfacing(), _do_recall()
+                )
 
-        async def _do_recall():
-            if recall_query:
-                return await recall_memories(recall_query, query_keywords=recall_keywords)
-            return [], []
+                now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+                bg_block = f"系统当前的准确时间是 {now_str}"
+                if surfaced:
+                    unresolved_lines = [f"📌 {m['content']}（还没做/还没去）" for m in surfaced if m.get("unresolved")]
+                    normal_lines = [f"- {m['content']}" for m in surfaced if not m.get("unresolved")]
+                    mem_text = "\n".join(unresolved_lines + normal_lines)
+                    bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
+                history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
+                history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。"})
+                inject_offset += 2
 
-        (surfaced, surfaced_ids), (_, debug_top6) = await asyncio.gather(
-            _do_surfacing(), _do_recall()
-        )
+                if is_search_needed and recall_query:
+                    recalled = [r for r in debug_top6 if r["score"] >= 0.45 and r["id"] not in surfaced_ids][:5]
+                    if digest_result.get("require_detail") and recalled:
+                        detail_text = await fetch_source_details(recalled, recall_keywords)
 
-        # 注入当前时间（缓存分界点）+ 背景记忆（动态内容）
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
-        bg_block = f"系统当前的准确时间是 {now_str}"
-        if surfaced:
-            unresolved_lines = [f"📌 {m['content']}（还没做/还没去）" for m in surfaced if m.get("unresolved")]
-            normal_lines = [f"- {m['content']}" for m in surfaced if not m.get("unresolved")]
-            mem_text = "\n".join(unresolved_lines + normal_lines)
-            bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
-        history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
-        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。"})
-        inject_offset += 2
+                debug_recalled = [{"content": m["content"], "type": m["type"], "score": m["score"],
+                                   "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
+                                   "importance": m.get("importance")} for m in recalled] if recalled else []
+                debug_top6_data = [{"content": m["content"][:100], "score": m["score"],
+                                    "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
+                                    "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
+                if recalled:
+                    mem_lines = "\n".join([f"- {m['content']}" for m in recalled])
+                    mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
+                    if detail_text:
+                        mem_block += f"\n\n[原文细节]\n以下是相关的具体对话记录：\n{detail_text}"
+                    history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
+                    history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
 
-        # 4. RAG 精确召回（与背景记忆去重，使用已并行获取的结果）
-        if is_search_needed and recall_query:
-            recalled = [r for r in debug_top6 if r["score"] >= 0.45 and r["id"] not in surfaced_ids][:5]
-            # 如果需要追溯原文细节
-            if digest_result.get("require_detail") and recalled:
-                detail_text = await fetch_source_details(recalled, recall_keywords)
-
-        debug_recalled = [{"content": m["content"], "type": m["type"], "score": m["score"],
-                           "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
-                           "importance": m.get("importance")} for m in recalled] if recalled else []
-        debug_top6_data = [{"content": m["content"][:100], "score": m["score"],
-                            "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
-                            "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
-        # 5. 注入向量匹配到的相关记忆（在背景记忆之后，每次请求都可能不同）
-        if recalled:
-            mem_lines = "\n".join([f"- {m['content']}" for m in recalled])
-            mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
-            if detail_text:
-                mem_block += f"\n\n[原文细节]\n以下是相关的具体对话记录：\n{detail_text}"
-            history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block})
-            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
-
-    debug_prompt = [{"role": m["role"], "content": m["content"][:500]} for m in history]
-
-    ai_msg_id = f"msg_{int(time.time()*1000)}"
-    usage_meta: dict = {}
-
-    # ── 后台任务 + SSE 转发：AI 生成和保存在后台任务中完成，即使客户端断开也不丢失 ──
-    _q: asyncio.Queue = asyncio.Queue()
-
-    # 取消事件
-    cancel_event = asyncio.Event()
-    active_generations[conv_id] = cancel_event
-
-    # 创建 TTS streamer（如果请求方开了 TTS）
-    tts_streamer = None
-    if body.tts_enabled and body.tts_voice:
-        tts_streamer = TTSStreamer(ai_msg_id, body.tts_voice, manager)
-    # 同步备用 TTS 状态，供 cam_check / schedule 等服务端触发场景使用
-    manager.set_tts_fallback(body.tts_enabled, body.tts_voice)
-
-    async def _bg_generate():
-        """后台任务：AI 流式生成 → 后处理 → 存 DB → WS 广播。始终运行到结束。"""
-        full_text = ""
-        has_error = False
-        try:
-            await _q.put({"id": ai_msg_id, "type": "start"})
+            debug_prompt = [{"role": m["role"], "content": m["content"][:500]} for m in history]
+            await _emit_stage("thinking", "思考中")
             try:
                 async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, thinking_level=body.thinking_level, cancel_event=cancel_event):
                     full_text += chunk
@@ -1458,7 +1433,6 @@ async def send_message(conv_id: str, body: MsgCreate):
     asyncio.create_task(_bg_generate())
 
     async def generate():
-        """SSE 转发：从队列读取事件转发给客户端。客户端断开时生成器关闭，后台任务不受影响。"""
         while True:
             data = await _q.get()
             if data.get("type") == "done":

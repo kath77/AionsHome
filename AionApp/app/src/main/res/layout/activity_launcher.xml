@@ -20,7 +20,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="选择连接方式"
+        android:text="选择连接方式，长按按钮可编辑地址"
         android:textSize="15sp"
         android:textColor="#aaaaaa"
         android:layout_marginBottom="40dp" />
@@ -50,7 +50,7 @@
         android:id="@+id/btnOutdoor"
         android:layout_width="280dp"
         android:layout_height="wrap_content"
-        android:text="🌐  户外 Tailscale"
+        android:text="🌐  户外访问"
         android:textSize="16sp"
         android:textColor="#ffffff"
         android:backgroundTint="#2d4a6e"
@@ -78,7 +78,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="手势返回到首页可切换地址\nHTTPS 自签证书，支持手机麦克风"
+        android:text="手势返回到首页可切换地址\n支持云端、局域网与自定义地址"
         android:textSize="11sp"
         android:textColor="#555555"
         android:layout_marginTop="16dp" />

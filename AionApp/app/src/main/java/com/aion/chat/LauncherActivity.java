@@ -22,11 +22,12 @@ public class LauncherActivity extends AppCompatActivity {
     private static final String PREFS       = "aion_prefs";
     private static final String KEY_URL     = "saved_url";
     private static final String KEY_AUTO    = "auto_connect";
+    private static final String KEY_HOME    = "home_url";
     private static final String KEY_OUTDOOR = "outdoor_url";
 
     // ★ 在这里修改你的两个地址
-    private static final String URL_HOME    = "http://192.168.0.101:8000/chat";
-    private static final String URL_OUTDOOR = "http://100.65.110.18:8000/chat";
+    private static final String URL_HOME    = "http://150.158.130.23:8000/chat";
+    private static final String URL_OUTDOOR = "http://150.158.130.23:8000/chat";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -49,15 +50,18 @@ public class LauncherActivity extends AppCompatActivity {
         Button   btnHome   = findViewById(R.id.btnHome);
         Button   btnOutdoor= findViewById(R.id.btnOutdoor);
         CheckBox cbRemember= findViewById(R.id.cbRemember);
+        String homeUrl = normalizeUrl(prefs.getString(KEY_HOME, URL_HOME));
         String outdoorUrl = normalizeUrl(prefs.getString(KEY_OUTDOOR, URL_OUTDOOR));
+        prefs.edit().putString(KEY_HOME, homeUrl).apply();
         prefs.edit().putString(KEY_OUTDOOR, outdoorUrl).apply();
 
-        tvHome.setText(URL_HOME);
+        tvHome.setText(homeUrl);
         tvOutdoor.setText(outdoorUrl);
 
         btnHome.setOnClickListener(v -> {
-            saveIfNeeded(prefs, cbRemember.isChecked(), URL_HOME);
-            launchWebView(URL_HOME);
+            String currentHome = normalizeUrl(prefs.getString(KEY_HOME, URL_HOME));
+            saveIfNeeded(prefs, cbRemember.isChecked(), currentHome);
+            launchWebView(currentHome);
         });
 
         btnOutdoor.setOnClickListener(v -> {
@@ -66,8 +70,29 @@ public class LauncherActivity extends AppCompatActivity {
             launchWebView(currentOutdoor);
         });
 
+        btnHome.setOnLongClickListener(v -> {
+            showAddressEditDialog(
+                    "设置主地址",
+                    "请输入主服务器地址，例如 http://150.158.130.23:8000/chat",
+                    prefs,
+                    KEY_HOME,
+                    URL_HOME,
+                    tvHome,
+                    "主地址已保存"
+            );
+            return true;
+        });
+
         btnOutdoor.setOnLongClickListener(v -> {
-            showOutdoorEditDialog(prefs, tvOutdoor);
+            showAddressEditDialog(
+                    "设置户外地址",
+                    "请输入户外地址，例如 http://150.158.130.23:8000/chat",
+                    prefs,
+                    KEY_OUTDOOR,
+                    URL_OUTDOOR,
+                    tvOutdoor,
+                    "户外地址已保存"
+            );
             return true;
         });
     }
@@ -108,25 +133,28 @@ public class LauncherActivity extends AppCompatActivity {
         return url;
     }
 
-    private void showOutdoorEditDialog(SharedPreferences prefs, TextView tvOutdoor) {
+    private void showAddressEditDialog(String title, String message,
+                                       SharedPreferences prefs, String prefKey,
+                                       String defaultUrl, TextView targetView,
+                                       String successToast) {
         EditText input = new EditText(this);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         input.setSingleLine(true);
-        input.setText(prefs.getString(KEY_OUTDOOR, URL_OUTDOOR));
+        input.setText(prefs.getString(prefKey, defaultUrl));
         input.setSelection(input.getText().length());
 
         new AlertDialog.Builder(this)
-                .setTitle("设置户外地址")
-                .setMessage("请输入 Tailscale 地址，例如 http://100.x.x.x:8000/chat")
+                .setTitle(title)
+                .setMessage(message)
                 .setView(input)
                 .setNegativeButton("取消", null)
                 .setPositiveButton("保存", (dialog, which) -> {
                     String raw = input.getText().toString().trim();
-                    if (raw.isEmpty()) raw = URL_OUTDOOR;
+                    if (raw.isEmpty()) raw = defaultUrl;
                     String normalized = normalizeUrl(raw);
-                    prefs.edit().putString(KEY_OUTDOOR, normalized).apply();
-                    tvOutdoor.setText(normalized);
-                    Toast.makeText(this, "户外地址已保存", Toast.LENGTH_SHORT).show();
+                    prefs.edit().putString(prefKey, normalized).apply();
+                    targetView.setText(normalized);
+                    Toast.makeText(this, successToast, Toast.LENGTH_SHORT).show();
                 })
                 .show();
     }

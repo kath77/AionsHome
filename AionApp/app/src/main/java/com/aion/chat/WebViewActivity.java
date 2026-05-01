@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -19,6 +20,7 @@ import android.util.Base64;
 import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
+import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -49,7 +51,7 @@ public class WebViewActivity extends AppCompatActivity {
     private static final int REQ_CAMERA = 1002;
     private static final String PREFS = "aion_prefs";
     private static final String KEY_URL = "saved_url";
-    private static final String URL_HOME = "http://192.168.0.101:8000/chat";
+    private static final String URL_HOME = "http://150.158.130.23:8000/chat";
     private WebView webView;
     private String targetUrl;
     private boolean pageLoaded = false;
@@ -186,8 +188,7 @@ public class WebViewActivity extends AppCompatActivity {
                     return true;
                 }
                 // 站内导航留在 WebView，外部链接用浏览器打开
-                String urlHost = request.getUrl().getHost();
-                if (urlHost != null && (urlHost.contains("192.168.") || urlHost.contains("100.") || urlHost.contains("localhost") || urlHost.contains("127.0.0.1"))) {
+                if (isInternalUrl(request.getUrl())) {
                     return false;
                 }
                 startActivity(new Intent(Intent.ACTION_VIEW, request.getUrl()));
@@ -223,6 +224,14 @@ public class WebViewActivity extends AppCompatActivity {
                     android.util.Log.e("AionWebView", "页面加载失败: " + error.getDescription());
                     showErrorPage(view, error.getDescription().toString());
                 }
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                pageLoaded = false;
+                android.util.Log.e("AionWebView", "SSL错误: " + error);
+                showErrorPage(view, "SSL 证书错误");
+                handler.cancel();
             }
         });
 
@@ -300,6 +309,18 @@ public class WebViewActivity extends AppCompatActivity {
         if (url == null || url.isEmpty()) return URL_HOME;
         if (url.contains("127.0.0.1") || url.contains("localhost")) return URL_HOME;
         return url;
+    }
+
+    private boolean isInternalUrl(Uri uri) {
+        if (uri == null) return false;
+        String host = uri.getHost();
+        if (host == null || host.isEmpty()) return false;
+        if (host.contains("192.168.") || host.contains("100.") || host.contains("localhost") || host.contains("127.0.0.1")) {
+            return true;
+        }
+        Uri targetUri = Uri.parse(targetUrl != null ? targetUrl : URL_HOME);
+        String targetHost = targetUri.getHost();
+        return host.equalsIgnoreCase(targetHost);
     }
 
     /**

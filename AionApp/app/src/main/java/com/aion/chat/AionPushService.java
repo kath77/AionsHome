@@ -71,7 +71,7 @@ import android.app.AppOpsManager;
 public class AionPushService extends Service {
 
     private static final String TAG = "AionPush";
-    private static final String URL_HOME = "http://192.168.0.101:8000/chat";
+    private static final String URL_HOME = "http://150.158.130.23:8000/chat";
 
     private static final String CH_KEEPALIVE = "aion_keepalive";
     private static final String CH_MESSAGE   = "aion_message";

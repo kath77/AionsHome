@@ -3095,7 +3095,9 @@ async function _processSSEStream(res) {
             streamingAiId = aiMsgId;
             currentMessages.push({ id: aiMsgId, conv_id: currentConvId, role: "assistant", content: "...", created_at: Date.now()/1000 });
             renderMessages();
-            _startTypingAnim(aiMsgId);
+            _startTypingAnim(aiMsgId, data.message || "思考中");
+          } else if (data.type === "stage" && aiMsgId) {
+            _setTypingAnimText(aiMsgId, data.message || "思考中");
           } else if (data.type === "chunk") {
             _stopTypingAnim();
             aiContent += data.content;
@@ -3260,7 +3262,9 @@ async function saveEdit(id) {
             streamingAiId = aiMsgId;
             currentMessages.push({ id: aiMsgId, conv_id: currentConvId, role: 'assistant', content: '...', created_at: Date.now()/1000 });
             renderMessages();
-            _startTypingAnim(aiMsgId);
+            _startTypingAnim(aiMsgId, data.message || '思考中');
+          } else if (data.type === 'stage' && aiMsgId) {
+            _setTypingAnimText(aiMsgId, data.message || '思考中');
           } else if (data.type === 'chunk') {
             _stopTypingAnim();
             aiContent += data.content;
@@ -3392,7 +3396,9 @@ async function regenerateMsg(aiMsgId) {
             streamingAiId = newId;
             currentMessages.push({ id: newId, conv_id: currentConvId, role: "assistant", content: "...", created_at: Date.now()/1000 });
             renderMessages();
-            _startTypingAnim(newId);
+            _startTypingAnim(newId, d.message || "思考中");
+          } else if (d.type === "stage" && newId) {
+            _setTypingAnimText(newId, d.message || "思考中");
           } else if (d.type === "chunk") {
             _stopTypingAnim();
             aiContent += d.content;
@@ -3454,7 +3460,7 @@ async function regenerateMsg(aiMsgId) {
 
 // ── AI 输入等待动画 ──
 let _typingTimer = null;
-function _startTypingAnim(msgId) {
+function _startTypingAnim(msgId, text = '思考中') {
   _stopTypingAnim();
   const container = document.getElementById(`m_${msgId}`);
   if (!container) return;
@@ -3462,15 +3468,14 @@ function _startTypingAnim(msgId) {
   if (!bubble) return;
   bubble.classList.add('typing-bubble');
   bubble.innerHTML = '<span class="typing-text">思考中</span><span class="typing-dots"><span></span><span></span><span></span></span>';
-  const texts = ['思考中', '正在输入'];
-  let idx = 0;
-  _typingTimer = setInterval(() => {
-    const label = bubble.querySelector('.typing-text');
-    if (!label) { _stopTypingAnim(); return; }
-    idx = (idx + 1) % texts.length;
-    label.style.opacity = '0';
-    setTimeout(() => { if (label.parentNode) { label.textContent = texts[idx]; label.style.opacity = '1'; } }, 200);
-  }, 2500);
+  _setTypingAnimText(msgId, text);
+}
+function _setTypingAnimText(msgId, text) {
+  const container = document.getElementById(`m_${msgId}`);
+  if (!container) return;
+  const label = container.querySelector('.typing-text');
+  if (!label) return;
+  label.textContent = text || '思考中';
 }
 function _stopTypingAnim() {
   if (_typingTimer) { clearInterval(_typingTimer); _typingTimer = null; }
