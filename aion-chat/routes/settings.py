@@ -6,13 +6,17 @@ from __future__ import annotations
 import json, time
 
 from fastapi import APIRouter
+from fastapi import HTTPException
 from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
 import httpx
 
-from config import SETTINGS, MODELS, save_settings, get_key, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR
+from config import (
+    SETTINGS, MODELS, save_settings, get_key, load_worldbook, save_worldbook, load_chat_status,
+    TTS_CACHE_DIR, ensure_relay_settings, refresh_active_relay_cache, get_active_relay
+)
 from database import get_db
 
 router = APIRouter()
@@ -24,11 +28,15 @@ async def list_models():
 
 # ── 设置 ──────────────────────────────────────────
 class SettingsUpdate(BaseModel):
+    relay_nodes: Optional[list[dict]] = None
+    active_relay_id: Optional[str] = None
     gemini_key: Optional[str] = None
     siliconflow_key: Optional[str] = None
     gemini_free_key: Optional[str] = None
     aipro_key: Optional[str] = None
     aipro_base_url: Optional[str] = None
+    deepseek_key: Optional[str] = None
+    deepseek_base_url: Optional[str] = None
     netease_music_u: Optional[str] = None
     proactive_enabled: Optional[bool] = None
     proactive_inactivity_enabled: Optional[bool] = None
@@ -51,17 +59,25 @@ async def get_settings():
         if not k or len(k) < 8:
             return k
         return k[:4] + "*" * (len(k) - 8) + k[-4:]
+    ensure_relay_settings(SETTINGS)
+    active_relay = get_active_relay() or {}
     return {
         "gemini_key": SETTINGS.get("gemini_key", ""),
         "siliconflow_key": SETTINGS.get("siliconflow_key", ""),
         "gemini_free_key": SETTINGS.get("gemini_free_key", ""),
         "aipro_key": SETTINGS.get("aipro_key", ""),
         "aipro_base_url": SETTINGS.get("aipro_base_url", "https://key.simpleai.com.cn/v1"),
+        "deepseek_key": SETTINGS.get("deepseek_key", ""),
+        "deepseek_base_url": SETTINGS.get("deepseek_base_url", "https://api.deepseek.com"),
         "netease_music_u": SETTINGS.get("netease_music_u", ""),
         "gemini_key_masked": mask(SETTINGS.get("gemini_key", "")),
         "siliconflow_key_masked": mask(SETTINGS.get("siliconflow_key", "")),
         "gemini_free_key_masked": mask(SETTINGS.get("gemini_free_key", "")),
         "aipro_key_masked": mask(SETTINGS.get("aipro_key", "")),
+        "deepseek_key_masked": mask(SETTINGS.get("deepseek_key", "")),
+        "relay_nodes": SETTINGS.get("relay_nodes", []),
+        "active_relay_id": SETTINGS.get("active_relay_id", ""),
+        "active_relay": active_relay,
         "netease_music_u_masked": mask(SETTINGS.get("netease_music_u", "")),
         "proactive_enabled": SETTINGS.get("proactive_enabled", True),
         "proactive_inactivity_enabled": SETTINGS.get("proactive_inactivity_enabled", True),
@@ -81,6 +97,14 @@ async def get_settings():
 
 @router.put("/api/settings")
 async def update_settings(body: SettingsUpdate):
+    if body.relay_nodes is not None:
+        for n in body.relay_nodes:
+            base_url = str((n or {}).get("base_url", "")).strip()
+            if not base_url.startswith("http://") and not base_url.startswith("https://"):
+                raise HTTPException(status_code=400, detail="中转站 base_url 必须以 http:// 或 https:// 开头")
+        SETTINGS["relay_nodes"] = body.relay_nodes
+    if body.active_relay_id is not None:
+        SETTINGS["active_relay_id"] = body.active_relay_id
     if body.gemini_key is not None:
         SETTINGS["gemini_key"] = body.gemini_key
     if body.siliconflow_key is not None:
@@ -91,6 +115,10 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["aipro_key"] = body.aipro_key
     if body.aipro_base_url is not None:
         SETTINGS["aipro_base_url"] = body.aipro_base_url
+    if body.deepseek_key is not None:
+        SETTINGS["deepseek_key"] = body.deepseek_key
+    if body.deepseek_base_url is not None:
+        SETTINGS["deepseek_base_url"] = body.deepseek_base_url
     if body.netease_music_u is not None:
         old_mu = SETTINGS.get("netease_music_u", "")
         SETTINGS["netease_music_u"] = body.netease_music_u
@@ -129,6 +157,9 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["proactive_quiet_window"] = (body.proactive_quiet_window or "").strip() or "00:30-08:30"
     if body.gift_prefer_html is not None:
         SETTINGS["gift_prefer_html"] = bool(body.gift_prefer_html)
+    # 统一校正 relay 配置（含旧字段迁移、active 修复）
+    ensure_relay_settings(SETTINGS)
+    refresh_active_relay_cache()
     save_settings(SETTINGS)
     return {"ok": True}
 

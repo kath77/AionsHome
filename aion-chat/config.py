@@ -3,7 +3,7 @@ from __future__ import annotations
 全局配置：路径、常量、settings / worldbook / chat_status 读写
 """
 
-import json, time, re
+import json, time, re, uuid
 from pathlib import Path
 
 # ── 路径 ─────────────────────────────────────────
@@ -31,12 +31,90 @@ DIGEST_ANCHOR_PATH = DATA_DIR / "digest_anchor.json"
 INDEX_PATH = CHATS_DIR / "_index.json"
 
 # ── Settings ─────────────────────────────────────
+DEFAULT_AIPRO_BASE_URL = "https://key.simpleai.com.cn/v1"
+_ACTIVE_RELAY_CACHE = None
+
+def _sanitize_relay_node(node: dict) -> dict:
+    return {
+        "id": str(node.get("id") or f"relay_{uuid.uuid4().hex[:8]}"),
+        "name": str(node.get("name") or "未命名中转站").strip() or "未命名中转站",
+        "base_url": str(node.get("base_url") or node.get("url") or DEFAULT_AIPRO_BASE_URL).strip(),
+        "api_key": str(node.get("api_key") or "").strip(),
+        "enabled": bool(node.get("enabled", True)),
+    }
+
+def ensure_relay_settings(data: dict) -> dict:
+    """兼容迁移：旧 aipro 字段 -> relay_nodes + active_relay_id"""
+    nodes = data.get("relay_nodes")
+    if not isinstance(nodes, list) or not nodes:
+        legacy_base = str(data.get("aipro_base_url") or DEFAULT_AIPRO_BASE_URL).strip()
+        legacy_key = str(data.get("aipro_key") or "").strip()
+        node = {
+            "id": "relay_default",
+            "name": "默认中转站",
+            "base_url": legacy_base,
+            "api_key": legacy_key,
+            "enabled": True,
+        }
+        data["relay_nodes"] = [node]
+        data["active_relay_id"] = node["id"]
+    else:
+        normalized = [_sanitize_relay_node(n) for n in nodes if isinstance(n, dict)]
+        if not normalized:
+            normalized = [{
+                "id": "relay_default",
+                "name": "默认中转站",
+                "base_url": DEFAULT_AIPRO_BASE_URL,
+                "api_key": "",
+                "enabled": True,
+            }]
+        data["relay_nodes"] = normalized
+        active_id = str(data.get("active_relay_id") or "").strip()
+        enabled_nodes = [n for n in normalized if n.get("enabled")]
+        enabled_ids = {n["id"] for n in enabled_nodes}
+        if active_id not in enabled_ids:
+            data["active_relay_id"] = (enabled_nodes[0]["id"] if enabled_nodes else normalized[0]["id"])
+    # 兼容字段始终与当前激活节点对齐
+    active = get_active_relay_from_data(data)
+    if active:
+        data["aipro_base_url"] = active.get("base_url") or DEFAULT_AIPRO_BASE_URL
+        data["aipro_key"] = active.get("api_key") or ""
+    elif "aipro_base_url" not in data:
+        data["aipro_base_url"] = DEFAULT_AIPRO_BASE_URL
+    return data
+
+def get_active_relay_from_data(data: dict) -> dict | None:
+    nodes = data.get("relay_nodes") or []
+    active_id = data.get("active_relay_id")
+    for n in nodes:
+        if n.get("id") == active_id and n.get("enabled"):
+            return n
+    for n in nodes:
+        if n.get("enabled"):
+            return n
+    return nodes[0] if nodes else None
+
+def refresh_active_relay_cache():
+    global _ACTIVE_RELAY_CACHE
+    _ACTIVE_RELAY_CACHE = get_active_relay_from_data(SETTINGS)
+    return _ACTIVE_RELAY_CACHE
+
+def get_active_relay() -> dict | None:
+    global _ACTIVE_RELAY_CACHE
+    if _ACTIVE_RELAY_CACHE is None:
+        refresh_active_relay_cache()
+    return _ACTIVE_RELAY_CACHE
+
 def load_settings():
     if SETTINGS_PATH.exists():
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        if "aipro_base_url" not in data:
-            data["aipro_base_url"] = "https://key.simpleai.com.cn/v1"
+        data.setdefault("deepseek_key", "")
+        data.setdefault("deepseek_base_url", "https://api.deepseek.com")
+        before = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        data = ensure_relay_settings(data)
+        after = json.dumps(data, ensure_ascii=False, sort_keys=True)
+        if before != after:
             save_settings(data)
         return data
     keys = {
@@ -44,7 +122,9 @@ def load_settings():
         "siliconflow_key": "",
         "gemini_free_key": "",
         "aipro_key": "",
-        "aipro_base_url": "https://key.simpleai.com.cn/v1",
+        "aipro_base_url": DEFAULT_AIPRO_BASE_URL,
+        "deepseek_key": "",
+        "deepseek_base_url": "https://api.deepseek.com",
     }
     txt = BASE_DIR.parent / "所需要的API.txt"
     if txt.exists():
@@ -54,12 +134,16 @@ def load_settings():
                     keys["gemini_key"] = line.split("：")[-1].strip()
                 elif "硅基流动" in line.lower() and "api" in line.lower():
                     keys["siliconflow_key"] = line.split("：")[-1].strip()
+    keys = ensure_relay_settings(keys)
     save_settings(keys)
     return keys
 
 def save_settings(data: dict):
+    data = ensure_relay_settings(data)
     with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    global _ACTIVE_RELAY_CACHE
+    _ACTIVE_RELAY_CACHE = get_active_relay_from_data(data)
 
 SETTINGS = load_settings()
 
@@ -70,6 +154,8 @@ def get_key(provider: str) -> str:
         return SETTINGS.get("gemini_free_key", "") or SETTINGS.get("gemini_key", "")
     if provider == "aipro":
         return SETTINGS.get("aipro_key", "")
+    if provider == "deepseek":
+        return SETTINGS.get("deepseek_key", "")
     return SETTINGS.get("siliconflow_key", "")
 
 # ── Worldbook ────────────────────────────────────
@@ -147,6 +233,8 @@ MODELS = {
     "哈基米gpt-5.5":    {"provider": "aipro", "model": "gemini-3.1-pro-high"},
     "哈基米3.1pro":     {"provider": "aipro", "model": "gemini-3.1-pro-high"},
     "哈基米2.5pro":    {"provider": "aipro", "model": "gemini-2.5-pro"},
+    "deepseek-v4-flash": {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    "deepseek-v4-pro":   {"provider": "deepseek", "model": "deepseek-v4-pro"},
     
 }
 

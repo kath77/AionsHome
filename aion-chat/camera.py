@@ -6,7 +6,11 @@ from __future__ import annotations
 import json, time, re, base64, asyncio, threading, sqlite3, random, sys, unicodedata
 from pathlib import Path
 
-import cv2, httpx, aiosqlite
+try:
+    import cv2
+except Exception:
+    cv2 = None
+import httpx, aiosqlite
 
 from config import (
     DB_PATH, SCREENSHOTS_DIR, MONITOR_LOGS_DIR,
@@ -21,6 +25,8 @@ from tts import TTSStreamer
 
 def _camera_backend():
     """按平台选择摄像头后端。"""
+    if cv2 is None:
+        return 0
     if sys.platform.startswith("win"):
         return cv2.CAP_DSHOW
     if sys.platform == "darwin":
@@ -30,6 +36,8 @@ def _camera_backend():
 
 def _open_capture(index: int):
     """按平台后端打开摄像头，失败时回退默认后端。"""
+    if cv2 is None:
+        return None
     backend = _camera_backend()
     try:
         cap = cv2.VideoCapture(index, backend)
@@ -249,6 +257,9 @@ class CameraMonitor:
         return frame[y1:y1 + crop_h, x1:x1 + crop_w]
 
     def open_camera(self, index: int = None):
+        if cv2 is None:
+            print("[Camera] OpenCV 不可用，摄像头功能已禁用")
+            return False
         if not self._cam_op_lock.acquire(blocking=False):
             print("[Camera] 操作进行中，忽略重复请求")
             return False
@@ -402,6 +413,8 @@ class CameraMonitor:
             time.sleep(0.033 if self.monitoring else 0.1)
 
     def get_frame_jpeg(self) -> bytes | None:
+        if cv2 is None:
+            return None
         with self._lock:
             if self._latest_frame is None:
                 return None
@@ -410,6 +423,8 @@ class CameraMonitor:
             return buf.tobytes()
 
     def save_screenshot(self) -> str | None:
+        if cv2 is None:
+            return None
         with self._lock:
             if self._latest_frame is None:
                 return None

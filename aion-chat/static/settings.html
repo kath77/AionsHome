@@ -8,6 +8,11 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#ff8359">
+<style>
+.modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:60; align-items:center; justify-content:center; padding:16px; }
+.modal-overlay.show { display:flex; }
+.modal { width:min(520px, 100%); max-height:86vh; overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; }
+</style>
 </head>
 <body>
 <div class="sub-page">
@@ -22,10 +27,16 @@
     <input class="form-input" type="text" id="geminiFreeKeyInput" placeholder="留空则复用上方 Key" autocomplete="off" style="font-family:monospace">
     <label class="form-label">硅基流动 API Key</label>
     <input class="form-input" type="text" id="sfKeyInput" placeholder="输入硅基流动 API Key..." autocomplete="off" style="font-family:monospace">
-    <label class="form-label">中转站 API Key</label>
-    <input class="form-input" type="text" id="aiproKeyInput" placeholder="输入中转站 API Key..." autocomplete="off" style="font-family:monospace">
-    <label class="form-label">中转站 Base URL</label>
-    <input class="form-input" type="text" id="aiproBaseUrlInput" placeholder="例如 https://key.simpleai.com.cn/v1" autocomplete="off" style="font-family:monospace">
+    <label class="form-label">中转站管理（URL + API Key）</label>
+    <div id="relayCurrentLabel" class="form-hint" style="margin-bottom:8px"></div>
+    <div id="relayList" class="list-container" style="max-height:260px"></div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn-save" type="button" onclick="openRelayEditor()">+ 新增中转站</button>
+    </div>
+    <label class="form-label">DeepSeek API Key</label>
+    <input class="form-input" type="text" id="deepseekKeyInput" placeholder="输入 DeepSeek API Key..." autocomplete="off" style="font-family:monospace">
+    <label class="form-label">DeepSeek Base URL</label>
+    <input class="form-input" type="text" id="deepseekBaseUrlInput" placeholder="https://api.deepseek.com" autocomplete="off" style="font-family:monospace">
     <label class="form-label">网易云 MUSIC_U Cookie（VIP 点歌）</label>
     <input class="form-input" type="text" id="neteaseMusicUInput" placeholder="浏览器 F12 → Cookie → MUSIC_U" autocomplete="off" style="font-family:monospace">
     <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin:10px 0 0 0">
@@ -105,17 +116,199 @@
     </div>
   </div>
 </div>
+
+<div class="modal-overlay" id="relayEditorOverlay">
+  <div class="modal">
+    <h3 id="relayEditorTitle">新增中转站</h3>
+    <label class="form-label">名称</label>
+    <input class="form-input" type="text" id="relayNameInput" placeholder="例如：主中转站">
+    <label class="form-label">Base URL</label>
+    <input class="form-input" type="text" id="relayBaseUrlInput" placeholder="https://key.simpleai.com.cn/v1" style="font-family:monospace">
+    <label class="form-label">API Key</label>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center">
+      <input class="form-input" type="password" id="relayApiKeyInput" placeholder="输入该中转站 API Key" style="font-family:monospace">
+      <button class="btn-cancel" type="button" id="relayKeyEyeBtn" onclick="toggleRelayKeyVisible()">👁</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-top:10px">
+      <span>启用</span><input id="relayEnabledInput" type="checkbox" checked>
+    </div>
+    <div class="btn-row">
+      <button class="btn-cancel" type="button" onclick="closeRelayEditor()">取消</button>
+      <button class="btn-save" type="button" onclick="saveRelayEditor()">保存中转站</button>
+    </div>
+  </div>
+</div>
+
 <script src="/static/common.js"></script>
 <script>
-connectCommonWS();
+if (typeof window.$ !== "function") {
+  window.$ = (id) => document.getElementById(id);
+}
+if (typeof window.escHtml !== "function") {
+  window.escHtml = function (s) {
+    const d = document.createElement("div");
+    d.textContent = String(s ?? "");
+    return d.innerHTML;
+  };
+}
+if (typeof window.showToast !== "function") {
+  window.showToast = function (msg) {
+    alert(msg);
+  };
+}
+if (typeof window.connectCommonWS === "function") {
+  connectCommonWS();
+}
+
+const _isFilePreview = location.protocol === "file:";
+let relayNodes = [];
+let activeRelayId = "";
+let editingRelayId = "";
+
+function relayMask(k) {
+  if (!k) return "";
+  if (k.length <= 8) return "****";
+  return k.slice(0, 4) + "*".repeat(Math.max(4, k.length - 8)) + k.slice(-4);
+}
+
+function relayRowHtml(node) {
+  const isActive = node.id === activeRelayId;
+  return `
+    <div class="starred-item" style="padding:8px 10px">
+      <div class="starred-item-header">
+        <div class="starred-item-conv">${escHtml(node.name || "未命名中转站")}${isActive ? "（当前）" : ""}</div>
+        <div class="starred-item-time">${node.enabled ? "启用" : "停用"}</div>
+      </div>
+      <div class="starred-item-role" style="font-family:monospace">${escHtml(node.base_url || "")}</div>
+      <div class="starred-item-role" style="font-family:monospace">Key: ${escHtml(relayMask(node.api_key || ""))}</div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="btn-cancel" type="button" style="padding:5px 10px;font-size:12px" onclick="openRelayEditor('${node.id}')">编辑</button>
+        <button class="btn-cancel" type="button" style="padding:5px 10px;font-size:12px" onclick="deleteRelayNode('${node.id}')">删除</button>
+        <button class="btn-save" type="button" style="padding:5px 10px;font-size:12px" onclick="setActiveRelay('${node.id}')">${isActive ? "当前使用中" : "设为当前"}</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderRelayList() {
+  const el = $("relayList");
+  const current = relayNodes.find(n => n.id === activeRelayId);
+  $("relayCurrentLabel").textContent = current ? `当前中转站：${current.name} (${current.base_url})` : "当前中转站：未设置";
+  if (!relayNodes.length) {
+    el.innerHTML = '<div class="list-empty">暂无中转站，请先新增。</div>';
+    return;
+  }
+  el.innerHTML = relayNodes.map(relayRowHtml).join("");
+}
+
+function openRelayEditor(id = "") {
+  editingRelayId = id || "";
+  const isEdit = !!editingRelayId;
+  $("relayEditorTitle").textContent = isEdit ? "编辑中转站" : "新增中转站";
+  const node = relayNodes.find(n => n.id === editingRelayId);
+  $("relayNameInput").value = node?.name || "";
+  $("relayBaseUrlInput").value = node?.base_url || "https://key.simpleai.com.cn/v1";
+  $("relayApiKeyInput").value = node?.api_key || "";
+  $("relayApiKeyInput").type = "password";
+  $("relayEnabledInput").checked = node ? !!node.enabled : true;
+  $("relayEditorOverlay").classList.add("show");
+}
+
+function closeRelayEditor() {
+  $("relayEditorOverlay").classList.remove("show");
+  editingRelayId = "";
+}
+
+function toggleRelayKeyVisible() {
+  const input = $("relayApiKeyInput");
+  input.type = input.type === "password" ? "text" : "password";
+}
+
+function saveRelayEditor() {
+  const name = $("relayNameInput").value.trim();
+  const baseUrl = $("relayBaseUrlInput").value.trim();
+  const apiKey = $("relayApiKeyInput").value.trim();
+  const enabled = $("relayEnabledInput").checked;
+  if (!name || !baseUrl || !apiKey) {
+    showToast("请完整填写名称、URL、API Key");
+    return;
+  }
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    showToast("Base URL 必须以 http:// 或 https:// 开头");
+    return;
+  }
+  if (editingRelayId) {
+    relayNodes = relayNodes.map(n => n.id === editingRelayId ? { ...n, name, base_url: baseUrl, api_key: apiKey, enabled } : n);
+  } else {
+    relayNodes.push({ id: `relay_${Date.now()}`, name, base_url: baseUrl, api_key: apiKey, enabled });
+  }
+  if (!activeRelayId && relayNodes.length) activeRelayId = relayNodes[0].id;
+  const current = relayNodes.find(n => n.id === activeRelayId);
+  if (!current || !current.enabled) {
+    const fallback = relayNodes.find(n => n.enabled);
+    if (fallback) activeRelayId = fallback.id;
+  }
+  closeRelayEditor();
+  renderRelayList();
+}
+
+function deleteRelayNode(id) {
+  const node = relayNodes.find(n => n.id === id);
+  if (!node) return;
+  if (!confirm(`确认删除中转站：${node.name}？`)) return;
+  relayNodes = relayNodes.filter(n => n.id !== id);
+  if (activeRelayId === id) {
+    const fallback = relayNodes.find(n => n.enabled) || relayNodes[0];
+    activeRelayId = fallback ? fallback.id : "";
+  }
+  renderRelayList();
+}
+
+function setActiveRelay(id) {
+  const node = relayNodes.find(n => n.id === id);
+  if (!node) return;
+  if (!node.enabled) {
+    showToast("该中转站已停用，无法设为当前");
+    return;
+  }
+  activeRelayId = id;
+  renderRelayList();
+}
 
 (async function init() {
+  if (_isFilePreview) {
+    relayNodes = [
+      {
+        id: "relay_demo_1",
+        name: "本地预览示例",
+        base_url: "https://key.simpleai.com.cn/v1",
+        api_key: "sk-demo-preview",
+        enabled: true
+      }
+    ];
+    activeRelayId = "relay_demo_1";
+    renderRelayList();
+    return;
+  }
   const s = await api("GET", "/api/settings");
   $("geminiKeyInput").value = s.gemini_key || "";
   $("geminiFreeKeyInput").value = s.gemini_free_key || "";
   $("sfKeyInput").value = s.siliconflow_key || "";
-  $("aiproKeyInput").value = s.aipro_key || "";
-  $("aiproBaseUrlInput").value = s.aipro_base_url || "https://key.simpleai.com.cn/v1";
+  relayNodes = Array.isArray(s.relay_nodes) ? s.relay_nodes : [];
+  activeRelayId = s.active_relay_id || "";
+  if (!relayNodes.length && (s.aipro_base_url || s.aipro_key)) {
+    relayNodes = [{
+      id: "relay_default",
+      name: "默认中转站",
+      base_url: s.aipro_base_url || "https://key.simpleai.com.cn/v1",
+      api_key: s.aipro_key || "",
+      enabled: true
+    }];
+    activeRelayId = "relay_default";
+  }
+  renderRelayList();
+  $("deepseekKeyInput").value = s.deepseek_key || "";
+  $("deepseekBaseUrlInput").value = s.deepseek_base_url || "https://api.deepseek.com";
   $("neteaseMusicUInput").value = s.netease_music_u || "";
   $("gift_prefer_html").checked = (s.gift_prefer_html !== false);
   $("proactive_enabled").checked = !!s.proactive_enabled;
@@ -159,12 +352,26 @@ connectCommonWS();
 })();
 
 async function saveSettings() {
+  if (_isFilePreview) {
+    showToast("file 预览模式：仅演示交互，不会保存到后端");
+    return;
+  }
+  if (!relayNodes.length) {
+    showToast("请至少配置一个中转站");
+    return;
+  }
+  const active = relayNodes.find(n => n.id === activeRelayId && n.enabled) || relayNodes.find(n => n.enabled) || relayNodes[0];
+  activeRelayId = active?.id || "";
   await api("PUT", "/api/settings", {
     gemini_key: $("geminiKeyInput").value.trim(),
     gemini_free_key: $("geminiFreeKeyInput").value.trim(),
     siliconflow_key: $("sfKeyInput").value.trim(),
-    aipro_key: $("aiproKeyInput").value.trim(),
-    aipro_base_url: $("aiproBaseUrlInput").value.trim(),
+    relay_nodes: relayNodes,
+    active_relay_id: activeRelayId,
+    aipro_key: active?.api_key || "",
+    aipro_base_url: active?.base_url || "",
+    deepseek_key: $("deepseekKeyInput").value.trim(),
+    deepseek_base_url: $("deepseekBaseUrlInput").value.trim() || "https://api.deepseek.com",
     netease_music_u: $("neteaseMusicUInput").value.trim(),
     gift_prefer_html: $("gift_prefer_html").checked,
     proactive_enabled: $("proactive_enabled").checked,
