@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 奥罗斯财团 — API 路由
 持仓 CRUD / 数据拉取 / 手动触发分析 / 配置开关

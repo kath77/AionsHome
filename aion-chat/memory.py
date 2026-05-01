@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 向量记忆库：embedding、recall、手动总结、即时哨兵（RAG 路由）
 """

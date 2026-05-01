@@ -1,8 +1,9 @@
+from __future__ import annotations
 """
 摄像头监控：CameraMonitor 类、Sentinel 分析、Core 唤醒、监控日志读写
 """
 
-import json, time, re, base64, asyncio, threading, sqlite3, random
+import json, time, re, base64, asyncio, threading, sqlite3, random, sys, unicodedata
 from pathlib import Path
 
 import cv2, httpx, aiosqlite
@@ -16,6 +17,81 @@ from ws import manager
 from ai_providers import stream_ai
 from memory import recall_memories
 from tts import TTSStreamer
+
+
+def _camera_backend():
+    """按平台选择摄像头后端。"""
+    if sys.platform.startswith("win"):
+        return cv2.CAP_DSHOW
+    if sys.platform == "darwin":
+        return getattr(cv2, "CAP_AVFOUNDATION", 0)
+    return 0
+
+
+def _open_capture(index: int):
+    """按平台后端打开摄像头，失败时回退默认后端。"""
+    backend = _camera_backend()
+    try:
+        cap = cv2.VideoCapture(index, backend)
+    except TypeError:
+        cap = cv2.VideoCapture(index)
+    if (not cap) or (not cap.isOpened()):
+        try:
+            if cap:
+                cap.release()
+        except Exception:
+            pass
+        cap = cv2.VideoCapture(index)
+    return cap
+
+
+def _is_garbled_text(text: str) -> bool:
+    """粗略判断乱码/异常混杂输出，避免污染监控日志与后续提示。"""
+    if not text:
+        return False
+    s = " ".join(str(text).split())
+    if len(s) < 40:
+        return False
+
+    cjk = latin = digit = 0
+    scripts = set()
+    for ch in s:
+        if '\u4e00' <= ch <= '\u9fff':
+            cjk += 1
+            scripts.add("cjk")
+        elif ('a' <= ch.lower() <= 'z'):
+            latin += 1
+            scripts.add("latin")
+        elif ch.isdigit():
+            digit += 1
+        elif '\u3040' <= ch <= '\u30ff':
+            scripts.add("kana")
+        elif '\uac00' <= ch <= '\ud7af':
+            scripts.add("hangul")
+        elif '\u0600' <= ch <= '\u06ff':
+            scripts.add("arabic")
+        elif '\u0590' <= ch <= '\u05ff':
+            scripts.add("hebrew")
+
+    n = max(1, len(s))
+    cjk_ratio = cjk / n
+    latin_ratio = latin / n
+    mixed_scripts = len(scripts) >= 3
+    many_separators = sum(1 for ch in s if ch in "|/_-") >= 12
+    too_many_ascii_words = len(re.findall(r"[A-Za-z]{7,}", s)) >= 10
+
+    return (
+        mixed_scripts and cjk_ratio < 0.18 and latin_ratio > 0.35
+    ) or (many_separators and cjk_ratio < 0.12) or too_many_ascii_words
+
+
+def _sanitize_monitor_text(text: str, fallback: str) -> str:
+    raw = " ".join((text or "").split()).strip()
+    if not raw:
+        return fallback
+    if _is_garbled_text(raw):
+        return fallback
+    return raw
 
 
 # ── 监控日志文件读写 ──────────────────────────────
@@ -104,7 +180,7 @@ async def async_get_last_user_msg_time() -> float:
 
 
 def detect_cameras(max_test: int = 5, skip_index: int = -1) -> list:
-    """扫描可用摄像头（DirectShow 后端 + 实际读帧验证）
+    """扫描可用摄像头（平台后端 + 实际读帧验证）
     skip_index: 跳过正在使用的摄像头，避免抢占设备导致采集线程中断
     """
     available = []
@@ -113,7 +189,7 @@ def detect_cameras(max_test: int = 5, skip_index: int = -1) -> list:
             available.append(i)  # 正在用的摄像头直接视为可用
             continue
         try:
-            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            cap = _open_capture(i)
             if cap.isOpened():
                 ret, frame = cap.read()
                 if ret and frame is not None and frame.mean() > 1:
@@ -184,7 +260,7 @@ class CameraMonitor:
 
             idx = self.cfg["camera_index"]
             self._cancel_verify = False
-            self.cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            self.cap = _open_capture(idx)
             if not self._verify_camera(max_wait=10):
                 if self.cap:
                     try: self.cap.release()
@@ -280,7 +356,7 @@ class CameraMonitor:
                     time.sleep(0.5)
                 if not self.running:
                     return
-                self.cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+                self.cap = _open_capture(idx)
                 self._cancel_verify = False
                 if self._verify_camera(max_wait=10):
                     self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
@@ -440,7 +516,12 @@ class CameraMonitor:
         recent_logs = read_logs_since(time.time() - 3600 * 6)
         log_history = ""
         if recent_logs:
-            log_lines = [f"[{e.get('time','')}] {e.get('monitoringlog','')}" for e in recent_logs[-20:]]
+            clean_logs = []
+            for e in recent_logs[-40:]:
+                t = _sanitize_monitor_text(e.get("monitoringlog", ""), "")
+                if t:
+                    clean_logs.append(f"[{e.get('time','')}] {t}")
+            log_lines = clean_logs[-20:]
             log_history = "\n".join(log_lines)
 
         chat_status_data = load_chat_status()
@@ -550,12 +631,18 @@ call_core判断依据：
                 cleaned = re.sub(r"\n?```$", "", cleaned)
                 cleaned = cleaned.strip()
             parsed = json.loads(cleaned)
-            monitoring_log = parsed.get("monitoringlog", raw_text)
+            monitoring_log = _sanitize_monitor_text(
+                parsed.get("monitoringlog", raw_text),
+                "我这边短暂没看清画面细节，建议再看一眼当前状态。"
+            )
             call_core = bool(parsed.get("call_core", False))
-            summary = parsed.get("summary", "")
-            core_reason = parsed.get("core_reason", "")
+            summary = _sanitize_monitor_text(parsed.get("summary", ""), "")
+            core_reason = _sanitize_monitor_text(parsed.get("core_reason", ""), "")
         except json.JSONDecodeError:
-            monitoring_log = raw_text.strip() if 'raw_text' in dir() else "[Sentinel 无响应]"
+            monitoring_log = _sanitize_monitor_text(
+                raw_text.strip() if 'raw_text' in dir() else "",
+                "监控分析结果格式异常，已跳过本次详细解读。"
+            )
             summary = ""
             core_reason = ""
         except Exception as e:
@@ -563,6 +650,12 @@ call_core判断依据：
             print(f"[Monitor] Sentinel API 调用异常: {e}")
             summary = ""
             core_reason = ""
+
+        if _is_garbled_text(monitoring_log):
+            monitoring_log = "监控分析文本异常，已忽略本次详细描述。"
+            summary = ""
+            core_reason = ""
+            call_core = False
 
         print(f"[Monitor] 分析完成, call_core={call_core}, log长度={len(monitoring_log)}")
         now = time.time()
@@ -601,7 +694,12 @@ call_core判断依据：
         else:
             all_logs = read_logs_since(last_user_ts if last_user_ts > 0 else time.time() - 3600 * 6)
             all_logs = all_logs[-24:]
-        recent_detail = "\n".join([f"[{e.get('time','')}] {e.get('monitoringlog','')}" for e in all_logs[-5:]])
+        recent_detail_lines = []
+        for e in all_logs[-12:]:
+            t = _sanitize_monitor_text(e.get("monitoringlog", ""), "")
+            if t:
+                recent_detail_lines.append(f"[{e.get('time','')}] {t}")
+        recent_detail = "\n".join(recent_detail_lines[-5:])
         if not recent_detail:
             recent_detail = trigger_log
 
@@ -713,13 +811,18 @@ call_core判断依据：
 
         full_text = ""
         try:
-            _temp = SETTINGS.get("temperature")
-            async for chunk in stream_ai(messages, model_key, temperature=_temp):
+            # 监控触发的主动回复使用较低温度，减少跑偏/胡言乱语
+            async for chunk in stream_ai(messages, model_key, temperature=0.35):
                 full_text += chunk
                 if core_tts:
                     core_tts.feed(chunk)
         except Exception as e:
             full_text = f"[Core 回复失败] {e}"
+
+        full_text = _sanitize_monitor_text(
+            full_text,
+            f"我刚看了一眼监控，但这次分析结果不稳定。我先不乱猜，你现在在做什么，我陪你。"
+        )
 
         if not full_text.strip():
             return
@@ -866,13 +969,18 @@ async def perform_cam_check(conv_id: str, model_key: str):
 
     full_text = ""
     try:
-        _temp = SETTINGS.get("temperature")
-        async for chunk in stream_ai(messages, model_key, temperature=_temp):
+        # 主动看监控也使用低温度，避免多语乱码或无关发散
+        async for chunk in stream_ai(messages, model_key, temperature=0.35):
             full_text += chunk
             if cam_tts:
                 cam_tts.feed(chunk)
     except Exception as e:
         full_text = f"[监控查看失败] {e}"
+
+    full_text = _sanitize_monitor_text(
+        full_text,
+        f"我看到了监控画面，但这次识别结果不太稳定。你要不要跟我说说你现在在做什么？"
+    )
 
     if not full_text.strip():
         return

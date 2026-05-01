@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Aion Chat — 入口文件
 FastAPI app 创建、lifespan、静态文件挂载、路由注册
@@ -116,7 +117,7 @@ from starlette.requests import Request
 class NoCacheStaticMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/static/"):
+        if request.url.path.startswith("/static/") or request.url.path.startswith("/public/"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return response
 

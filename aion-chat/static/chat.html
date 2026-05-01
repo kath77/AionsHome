@@ -11,21 +11,21 @@
 <meta name="theme-color" content="#ff8359">
 <style>
 :root {
-  --bg: #fff9f5;
-  --surface: #ffffff;
-  --surface2: #fff0e6;
-  --border: #f0e4dd;
-  --text: #4a3b32;
-  --text2: #8a7b72;
-  --text3: #b0a39a;
-  --accent: #ff8359;
-  --user-bg: #ffe4eb;
-  --ai-bg: #e8f5e9;
+  --bg: #f3f3f5;
+  --surface: #f7f7f8;
+  --surface2: #ececef;
+  --border: #d6d7dc;
+  --text: #1b1c1f;
+  --text2: #5f636d;
+  --text3: #989ca6;
+  --accent: #4a4d54;
+  --user-bg: #4a4d54;
+  --ai-bg: #ececef;
   --danger: #cf222e;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body { height:100%; }
-body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif; background: linear-gradient(180deg, #f8f8f9 0%, #f2f2f4 55%, #ededf0 100%); color: var(--text); overflow: hidden; }
 
 /* ── 自定义滚动条 ── */
 ::-webkit-scrollbar {
@@ -65,7 +65,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 /* ── 聊天区 ── */
 .chat-area { flex:1; display: flex; flex-direction: column; min-width: 0; position: relative; }
 
-.chat-header { padding: 10px 16px; border-bottom: 1px solid rgba(240,228,221,0.45); background: rgba(255,249,245,0.65); backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6); display: flex; align-items: center; gap: 10px; min-height: 48px; position: absolute; top: 0; left: 0; right: 0; z-index: 8; box-shadow: 0 1px 8px rgba(0,0,0,0.06); }
+.chat-header { padding: 10px 16px; border-bottom: 1px solid rgba(214,215,220,0.75); background: rgba(247,247,248,0.88); backdrop-filter: blur(20px) saturate(1.05); -webkit-backdrop-filter: blur(20px) saturate(1.05); display: flex; align-items: center; gap: 10px; min-height: 48px; position: absolute; top: 0; left: 0; right: 0; z-index: 8; box-shadow: 0 1px 10px rgba(40,43,51,0.05); }
 .chat-header .home-btn { background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px 6px; flex-shrink: 0; }
 .chat-header .menu-btn { display: none; background: none; border: none; color: var(--text); font-size: 22px; cursor: pointer; padding: 4px; }
 .chat-header .title { flex:1; font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
@@ -82,7 +82,7 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 .config-popup .slider-val { font-size:13px; color:var(--text); min-width:40px; text-align:right; }
 
 /* ── 消息列表 ── */
-.messages { flex:1; overflow-y: auto; padding: 16px; padding-top: 60px; display: flex; flex-direction: column; gap: 2px; }
+.messages { flex:1; overflow-y: auto; padding: 16px; padding-top: 60px; display: flex; flex-direction: column; gap: 4px; }
 
 .msg-row { display: flex; flex-direction: row; max-width: 82%; margin-bottom: 4px; gap: 8px; align-items: flex-start; }
 .msg-row.user { align-self: flex-end; flex-direction: row-reverse; }
@@ -132,9 +132,9 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 .starred-item-unstar { background:none; border:none; color:var(--text3); font-size:12px; cursor:pointer; padding:2px 6px; flex-shrink:0; }
 .starred-item-unstar:hover { color:#f44336; }
 
-.msg-bubble { padding: 10px 14px; border-radius: 14px; font-size: 15px; line-height: 1.65; word-break: break-word; color: #1a1a1a; font-weight: 450; }
-.msg-row.user .msg-bubble { background: linear-gradient(145deg, #e7cece 0%, #e7cece 100%); border-bottom-right-radius: 4px; border: 1px solid rgba(248,187,208,0.5); box-shadow: inset 0 2px 4px rgba(255,255,255,0.5), inset 0 -2px 4px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.1); }
-.msg-row.assistant .msg-bubble { background: linear-gradient(145deg, #bccbbb 0%, #bccbbb 100%); border: 1px solid rgba(165,214,140,0.5); border-bottom-left-radius: 4px; box-shadow: inset 0 2px 4px rgba(255,255,255,0.5), inset 0 -2px 4px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.1); }
+.msg-bubble { padding: 11px 16px; border-radius: 20px; font-size: 15px; line-height: 1.62; word-break: break-word; color: #191a1d; font-weight: 430; box-shadow: 0 1px 2px rgba(32,35,44,0.06); margin-bottom: 10px; }
+.msg-row.user .msg-bubble { background: linear-gradient(180deg, #575a63 0%, #484b54 100%); color: #f4f5f7; border: 1px solid rgba(62,65,74,0.9); border-bottom-right-radius: 8px; }
+.msg-row.assistant .msg-bubble { background: linear-gradient(180deg, #f0f0f3 0%, #e8e8ec 100%); border: 1px solid rgba(213,214,220,0.92); border-bottom-left-radius: 8px; }
 .msg-bubbles { display:flex; flex-direction:column; gap:3px; }
 .msg-row.user .msg-bubbles { align-items:flex-end; }
 .msg-row.assistant .msg-bubbles { align-items:flex-start; }
@@ -262,12 +262,16 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 .msg-actions button:hover { color: var(--text); border-color: var(--text2); }
 
 /* ── 输入区 ── */
-.input-area { padding: 10px 16px 12px; border-top: 1px solid var(--border); background: var(--surface); display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.input-area { padding: 10px 16px 12px; border-top: 1px solid rgba(214,215,220,0.86); background: linear-gradient(180deg, rgba(246,246,248,0.96) 0%, rgba(242,242,245,0.98) 100%); display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .input-row { display:flex; gap:8px; align-items:flex-end; width:100%; }
-.input-row textarea { flex:1; background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: 15px; resize: none; max-height: 120px; min-height: 42px; line-height: 1.4; font-family: inherit; outline: none; }
-.input-row textarea:focus { border-color: var(--accent); }
-.upload-btn { background:var(--surface2); border:1px solid var(--border); color:var(--text2); border-radius:50%; width:42px; height:42px; font-size:20px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
-.upload-btn:hover { color:var(--text); border-color:var(--text2); }
+.input-row textarea { flex:1; background: #f5f5f7; color: #23252b; border: 1px solid #c8cad1; border-radius: 24px; padding: 10px 16px; font-size: 15px; resize: none; max-height: 120px; min-height: 42px; line-height: 1.4; font-family: inherit; outline: none; box-shadow: inset 0 1px 2px rgba(22,24,29,0.05); }
+.input-row textarea::placeholder { color: #a4a8b1; }
+.input-row textarea:focus { border-color: #888d99; background: #f8f8fa; }
+#input { scrollbar-width: none; -ms-overflow-style: none; }
+#input::-webkit-scrollbar { width: 0; height: 0; background: transparent; }
+#input::-webkit-scrollbar-thumb { background: transparent; }
+.upload-btn { background:#ebecf0; border:1px solid #d2d4da; color:#6f7480; border-radius:50%; width:42px; height:42px; font-size:20px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.upload-btn:hover { color:#2b2e35; border-color:#a4a9b3; }
 
 /* ── 附加功能菜单 ── */
 .plus-menu-wrap { position:relative; flex-shrink:0; }
@@ -287,9 +291,10 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 .cam-close-btn { width:48px; height:48px; background:rgba(255,255,255,0.2); color:#fff; font-size:22px; }
 .cam-shutter-btn { width:68px; height:68px; background:#fff; color:#333; font-size:28px; border:4px solid rgba(255,255,255,0.5) !important; }
 .cam-flip-btn { width:48px; height:48px; background:rgba(255,255,255,0.2); color:#fff; font-size:20px; }
-.send-btn { background: var(--accent); border: none; color: #fff; border-radius: 50%; width: 42px; height: 42px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.send-btn { background: linear-gradient(180deg, #636872 0%, #4f545e 100%); border: 1px solid #434852; color: #f7f8fa; border-radius: 50%; width: 42px; height: 42px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 10px rgba(28,31,39,0.22); transition: transform .15s ease, box-shadow .18s ease, opacity .15s ease; }
+.send-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 14px rgba(28,31,39,0.28); }
 .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-.send-btn.stop-mode { background: var(--danger); opacity: 1 !important; cursor: pointer !important; animation: stopPulse 1.5s ease-in-out infinite; }
+.send-btn.stop-mode { background: linear-gradient(180deg, #696f7a 0%, #575d67 100%); border: 1px solid #4a4f59; opacity: 1 !important; cursor: pointer !important; animation: stopPulse 1.5s ease-in-out infinite; }
 @keyframes stopPulse { 0%,100%{opacity:0.9} 50%{opacity:1} }
 
 .preview-area { display:none; width:100%; padding:0; gap:8px; flex-wrap:wrap; }
@@ -1011,6 +1016,13 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
         </div>
       </div>
       <div class="cam-section">
+        <div class="tts-voice-row">
+          <label>世界书</label>
+          <select id="worldbookSelect" onchange="onWorldbookChange()"><option value="">加载中...</option></select>
+          <button onclick="setDefaultWorldbook()" style="background:none;border:none;cursor:pointer;font-size:13px" title="设为默认">⭐</button>
+        </div>
+      </div>
+      <div class="cam-section">
         <div class="cam-toggle-row">
           <span class="cam-toggle-label">语音监听</span>
           <label class="toggle-switch">
@@ -1110,6 +1122,8 @@ const _clientId = localStorage.getItem('aion_client_id') || (() => {
 let ws = null;
 let pendingAttachments = [];  // [{url, type, name}]
 let worldBook = { ai_persona: "", user_persona: "", ai_name: "AI", user_name: "你" };
+let worldbooks = [];
+let currentWorldbookId = "";
 let msgDebugData = {};  // { msgId: { model, recalled_memories, prompt_messages, prompt_count, usage } }
 let systemLogs = [];    // 系统日志（会话级，刷新清空）
 let msgMusicCards = {}; // { msgId: [{ id, name, artist, album, cover, audio_url, candidates }] }
@@ -1123,6 +1137,7 @@ async function init() {
   models = await api("GET", "/api/models");
   renderModelSelect();
   worldBook = await api("GET", "/api/worldbook");
+  await refreshWorldbooks();
   conversations = await api("GET", "/api/conversations");
   const lastId = localStorage.getItem('aion_last_conv');
   if (lastId && conversations.find(c => c.id === lastId)) {
@@ -2783,7 +2798,8 @@ async function newConversation() {
   const model = $("modelSelect").value;
   const today = new Date();
   const title = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
-  const conv = await api("POST", "/api/conversations", { title, model });
+  const worldbook_id = $("worldbookSelect")?.value || currentWorldbookId || null;
+  const conv = await api("POST", "/api/conversations", { title, model, worldbook_id });
   await selectConv(conv.id);
   closeSidebar();
 }
@@ -2800,6 +2816,18 @@ async function selectConv(id) {
   if (conv) {
     $("chatTitle").textContent = conv.title;
     $("modelSelect").value = conv.model;
+    currentWorldbookId = conv.worldbook_id || "";
+    if ($("worldbookSelect")) $("worldbookSelect").value = currentWorldbookId;
+    const wb = worldbooks.find(w => w.id === currentWorldbookId);
+    if (wb) {
+      worldBook = {
+        ai_name: wb.ai_name || "AI",
+        user_name: wb.user_name || "你",
+        ai_persona: wb.ai_persona || "",
+        user_persona: wb.user_persona || "",
+        system_prompt: wb.system_prompt || ""
+      };
+    }
   }
   currentMessages = await api("GET", `/api/conversations/${id}/messages?limit=${MSG_PAGE_SIZE}`);
   // 加载该对话的心语数据
@@ -2857,6 +2885,62 @@ async function delConv(id) {
 async function changeModel() {
   if (!currentConvId) return;
   await api("PUT", `/api/conversations/${currentConvId}`, { model: $("modelSelect").value });
+}
+
+async function refreshWorldbooks() {
+  try {
+    worldbooks = await api("GET", "/api/worldbooks");
+  } catch (e) {
+    worldbooks = [];
+  }
+  const sel = $("worldbookSelect");
+  if (!sel) return;
+  if (!worldbooks.length) {
+    sel.innerHTML = '<option value="">默认世界书</option>';
+    return;
+  }
+  sel.innerHTML = worldbooks.map(w => `<option value="${w.id}">${escHtml(w.name || w.ai_name || "未命名世界书")}${w.is_default ? "（默认）" : ""}</option>`).join("");
+  if (currentWorldbookId && worldbooks.find(w => w.id === currentWorldbookId)) {
+    sel.value = currentWorldbookId;
+  } else {
+    const d = worldbooks.find(w => w.is_default) || worldbooks[0];
+    currentWorldbookId = d ? d.id : "";
+    if (d) sel.value = d.id;
+  }
+}
+
+async function onWorldbookChange() {
+  if (!currentConvId) return;
+  const worldbook_id = $("worldbookSelect").value;
+  if (!worldbook_id) return;
+  await api("PUT", `/api/conversations/${currentConvId}/worldbook`, { worldbook_id });
+  currentWorldbookId = worldbook_id;
+  const c = conversations.find(x => x.id === currentConvId);
+  if (c) c.worldbook_id = worldbook_id;
+  const wb = worldbooks.find(w => w.id === worldbook_id);
+  if (wb) {
+    worldBook = {
+      ai_name: wb.ai_name || "AI",
+      user_name: wb.user_name || "你",
+      ai_persona: wb.ai_persona || "",
+      user_persona: wb.user_persona || "",
+      system_prompt: wb.system_prompt || ""
+    };
+    renderMessages();
+  }
+  showToast("已切换世界书");
+}
+
+async function setDefaultWorldbook() {
+  const worldbook_id = $("worldbookSelect")?.value;
+  if (!worldbook_id) return;
+  await api("PUT", `/api/worldbooks/${worldbook_id}/default`);
+  await refreshWorldbooks();
+  showToast("已设为默认世界书");
+}
+
+function openWorldbookManager() {
+  window.location.href = "/worldbook";
 }
 
 async function renameConv(id) {
@@ -3624,7 +3708,14 @@ function handlePoiSearch(categories, msgId) {
 }
 
 // ── UI ──
-function handleKey(e) { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); send(); } }
+function handleKey(e) {
+  if (e.key !== "Enter") return;
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.shiftKey) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  e.preventDefault();
+  send();
+}
 
 function renderAttachments(atts) {
   if (!atts || !atts.length) return '';
@@ -4585,6 +4676,10 @@ function _presentNextGift() {
   if (!_giftQueue.length) { _giftShowing = false; return; }
   _giftShowing = true;
   const gift = _giftQueue[0];
+  const isHtmlGift = (gift.gift_type === 'html');
+  const mediaHtml = isHtmlGift
+    ? `<div class="gift-image" style="background:#fff;border-radius:16px;overflow:hidden"><iframe style="width:320px;height:320px;border:none;display:block;background:#fff;pointer-events:none" sandbox="allow-same-origin" src="/api/gift/${gift.id}/html"></iframe></div>`
+    : `<img class="gift-image" src="/uploads/${gift.image_path}" alt="礼物" />`;
   const old = document.getElementById('giftOverlay');
   if (old) old.remove();
   const overlay = document.createElement('div');
@@ -4611,7 +4706,7 @@ function _presentNextGift() {
       <div class="gift-reveal" id="giftReveal" style="display:none">
         <div class="confetti-container" id="confettiContainer"></div>
         <div class="gift-image-wrap" id="giftImageWrap" onclick="_showGiftMessage()">
-          <img class="gift-image" src="/uploads/${gift.image_path}" alt="礼物" />
+          ${mediaHtml}
         </div>
         <div class="gift-message-wrap" id="giftMessageWrap" style="display:none">
           <p class="gift-message-text">${escHtml(gift.message)}</p>
@@ -4721,7 +4816,7 @@ function closeSubPage() {
   }
 }
 window.addEventListener('popstate', function(e) {
-  if ($('subPageOverlay').classList.contains('show')) { closeSubPage(); }
+  window.location.href = '/';
 });
 </script>
 <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>

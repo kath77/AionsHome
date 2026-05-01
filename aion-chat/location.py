@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 高德地图定位模块：坐标转换、距离计算、高德 API 调用、状态机管理、哨兵联动
 """

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 AI 模型调用：硅基流动 / Gemini 流式 + 多模态消息构建
 """
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-from config import get_key, MODELS, UPLOADS_DIR
+from config import get_key, MODELS, UPLOADS_DIR, SETTINGS
 
 
 # ── 多模态消息构建 ────────────────────────────────
@@ -140,9 +141,13 @@ async def call_gemini(messages: list, model: str, meta: dict | None = None, temp
                     except:
                         pass
 
-# ── AiPro 中转站 ────────────────────────────────────────https://vip.aipro.love
+# ── AiPro 中转站 ────────────────────────────────────────
 async def call_aipro(messages: list, model: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None):
-    url = "https://vip.aipro.love/v1/chat/completions"	
+    base_url = (SETTINGS.get("aipro_base_url") or "https://key.simpleai.com.cn/v1").strip().rstrip("/")
+    if base_url.endswith("/chat/completions"):
+        url = base_url
+    else:
+        url = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {get_key('aipro')}", "Content-Type": "application/json"}
     api_messages = build_multimodal_messages(messages)
     payload = {"model": model, "messages": api_messages, "stream": True}

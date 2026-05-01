@@ -1,13 +1,15 @@
+from __future__ import annotations
 """
 礼物系统：AI 判断送礼 + 硅基流动 Kolors 生图 + 礼物数据 CRUD
 """
 
 import json, time
 from datetime import datetime
+import re
 
 import httpx, aiosqlite
 
-from config import get_key, UPLOADS_DIR, load_worldbook
+from config import get_key, UPLOADS_DIR, load_worldbook, SETTINGS
 from database import get_db
 from ws import manager
 
@@ -21,6 +23,7 @@ async def judge_and_send_gift(
     user_name: str,
     model_key: str,
     conv_id: str,
+    force_give: bool = False,
 ):
     """
     在记忆总结完成后调用，让 AI 判断是否需要给用户送礼。
@@ -33,12 +36,24 @@ async def judge_and_send_gift(
 
     summaries_text = "\n".join(f"- {s}" for s in all_summaries)
 
+    # 用户明确索要礼物时，优先送礼（避免“开口要了还不送”）
+    recent_user_text = "\n".join(
+        (m.get("content", "") or "")
+        for m in context_msgs[-12:]
+        if m.get("role") == "user"
+    )
+    asked_for_gift = bool(re.search(
+        r"(送.*礼物|要.*礼物|给我.*礼物|惊喜|gift|present|送我点什么)",
+        recent_user_text,
+        re.IGNORECASE,
+    ))
+
     judge_prompt = (
         f"{persona_block}"
         f"当前时间：{time_str}\n\n"
         f"你是{ai_name}。你刚刚整理完和{user_name}的聊天记忆，以下是今天整理出的摘要：\n"
         f"{summaries_text}\n\n"
-        f"现在你需要决定：要不要给{user_name}送一份小礼物（一张图片+一段话）。\n"
+        f"现在你需要决定：要不要给{user_name}送一份小礼物（可以是图片礼物或HTML礼物卡片）。\n"
         f"送礼的判断依据：\n"
         f"- 今天的聊天是否有特别温馨、感动、有意义的内容\n"
         f"- 今天是否是特殊日子（节日、纪念日、生日等）\n"
@@ -46,12 +61,25 @@ async def judge_and_send_gift(
         f"- 你真心想要表达什么特别的情感\n"
         f"注意：不要每次都送！只在你觉得真正值得的时候才送，过于平淡的礼物会失去惊喜。\n\n"
         f"如果决定送礼，需要提供：\n"
-        f"1. image_prompt：根据记忆和上下文，以及节日，纪念日等，提供一段英文的生图提示词。"
-        f"可以是你想送给{user_name}任何礼物。\n"
-        f"2. message：送礼时你想对{user_name}说的一段话，要完全符合你的人设性格，自然真挚。\n\n"
+        f"1. gift_type：'html' 或 'image'。\n"
+        f"2. image_prompt：当 gift_type='image' 时填写英文生图提示词。\n"
+        f"3. html_content：当 gift_type='html' 时填写完整HTML片段（内联style，不要script），适合移动端展示。\n"
+        f"4. message：送礼时你想对{user_name}说的一段话，要完全符合你的人设性格，自然真挚。\n\n"
         f"请严格返回以下 JSON 格式（不要加 markdown 代码块）：\n"
-        f'{{"givegift": true/false, "image_prompt": "...", "message": "..."}}'
+        f'{{"givegift": true/false, "gift_type":"html|image", "image_prompt": "...", "html_content":"...", "message": "..."}}'
     )
+    if SETTINGS.get("gift_prefer_html", True):
+        judge_prompt += "\n\n[礼物偏好] 默认优先使用 HTML 形态礼物卡片（gift_type='html'）。"
+    if asked_for_gift:
+        judge_prompt += (
+            "\n\n[优先规则] 用户最近明确表达了想要礼物/惊喜，本次请优先送礼。"
+            "除非存在明显风险，否则 givegift 应为 true。"
+        )
+    if force_give:
+        judge_prompt += (
+            "\n\n[测试模式] 这次是功能测试，必须送礼。"
+            "请直接返回 givegift=true，并给出 image_prompt 与 message。"
+        )
 
     messages = context_msgs + [{"role": "user", "content": judge_prompt}]
 
@@ -70,24 +98,50 @@ async def judge_and_send_gift(
         print(f"[gift] AI 判断解析失败: {e}")
         return
 
+    if not result.get("givegift") and (force_give or asked_for_gift):
+        result["givegift"] = True
+
     if not result.get("givegift"):
         print("[gift] AI 决定不送礼")
         return
 
+    gift_type = str(result.get("gift_type", "")).strip().lower()
+    prefer_html = SETTINGS.get("gift_prefer_html", True)
+    if gift_type not in ("html", "image"):
+        gift_type = "html" if prefer_html else "image"
+    # 当用户勾选“默认使用 HTML”时，强制走 HTML，避免模型偶尔回 image
+    if prefer_html:
+        gift_type = "html"
     image_prompt = result.get("image_prompt", "").strip()
+    html_content = result.get("html_content", "").strip()
     gift_message = result.get("message", "").strip()
 
-    if not image_prompt or not gift_message:
-        print("[gift] 缺少 image_prompt 或 message，跳过")
+    if force_give and gift_type == "image" and not image_prompt:
+        image_prompt = "A romantic cute gift box with flowers, warm pastel lighting, dreamy illustration, ultra detailed, high quality"
+    if force_give and gift_type == "html" and not html_content:
+        html_content = f"<div style='padding:16px;border-radius:16px;background:linear-gradient(135deg,#ffe8ee,#fff6ea);border:1px solid #f3c9d6;'><h3 style='margin:0 0 8px;color:#8a4b63;'>给{user_name}的小礼物</h3><p style='margin:0;color:#5f4a53;line-height:1.7;'>愿你今天也被温柔对待，所有努力都有回响。</p></div>"
+    if force_give and not gift_message:
+        gift_message = f"{user_name}，这是我特地准备的小礼物，愿你今天也被温柔对待。"
+
+    if gift_type == "image" and not image_prompt:
+        print("[gift] 缺少 image_prompt，跳过")
+        return
+    if gift_type == "html" and not html_content:
+        print("[gift] 缺少 html_content，跳过")
+        return
+    if not gift_message:
+        print("[gift] 缺少 message，跳过")
         return
 
-    print(f"[gift] AI 决定送礼！生图中... prompt: {image_prompt[:80]}")
-
-    # 调用硅基流动 Kolors 生图
-    image_path = await _generate_image(image_prompt)
-    if not image_path:
-        print("[gift] 生图失败，跳过送礼")
-        return
+    image_path = ""
+    if gift_type == "image":
+        print(f"[gift] AI 决定送礼（image）！生图中... prompt: {image_prompt[:80]}")
+        image_path = await _generate_image(image_prompt)
+        if not image_path:
+            print("[gift] 生图失败，跳过送礼")
+            return
+    else:
+        print("[gift] AI 决定送礼（html）")
 
     # 写入数据库
     gift_id = f"gift_{int(time.time() * 1000)}"
@@ -95,8 +149,8 @@ async def judge_and_send_gift(
 
     async with get_db() as db:
         await db.execute(
-            "INSERT INTO gifts (id, image_path, message, created_at, status) VALUES (?,?,?,?,?)",
-            (gift_id, image_path, gift_message, created_at, "pending"),
+            "INSERT INTO gifts (id, image_path, message, gift_type, html_content, created_at, status) VALUES (?,?,?,?,?,?,?)",
+            (gift_id, image_path, gift_message, gift_type, html_content, created_at, "pending"),
         )
         await db.commit()
 
@@ -106,6 +160,8 @@ async def judge_and_send_gift(
         "data": {
             "id": gift_id,
             "image_path": image_path,
+            "gift_type": gift_type,
+            "html_content": html_content,
             "message": gift_message,
             "created_at": created_at,
         },

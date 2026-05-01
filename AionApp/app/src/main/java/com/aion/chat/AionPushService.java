@@ -57,6 +57,7 @@ import android.provider.Settings;
 
 import android.content.BroadcastReceiver;
 import android.content.IntentFilter;
+import android.app.AppOpsManager;
 
 /**
  * 前台服务 — OkHttp WebSocket 长连接
@@ -70,6 +71,7 @@ import android.content.IntentFilter;
 public class AionPushService extends Service {
 
     private static final String TAG = "AionPush";
+    private static final String URL_HOME = "http://192.168.0.101:8000/chat";
 
     private static final String CH_KEEPALIVE = "aion_keepalive";
     private static final String CH_MESSAGE   = "aion_message";
@@ -169,6 +171,7 @@ public class AionPushService extends Service {
 
             String url = intent.getStringExtra("url");
             if (url != null) {
+                url = normalizeUrl(url);
                 String ws = url.replace("http://", "ws://").replace("https://", "wss://");
                 if (!ws.endsWith("/ws")) {
                     ws = ws.replace("/chat", "/ws");
@@ -184,7 +187,8 @@ public class AionPushService extends Service {
 
         if (serverUrl == null) {
             SharedPreferences prefs = getSharedPreferences("aion_prefs", MODE_PRIVATE);
-            String saved = prefs.getString("saved_url", "http://192.168.1.92:8080/chat");
+            String saved = normalizeUrl(prefs.getString("saved_url", URL_HOME));
+            prefs.edit().putString("saved_url", saved).apply();
             serverUrl = saved.replace("http://", "ws://").replace("https://", "wss://")
                              .replace("/chat", "/ws");
         }
@@ -244,6 +248,12 @@ public class AionPushService extends Service {
                     SystemClock.elapsedRealtime() + 3000, pi);
         }
         super.onTaskRemoved(rootIntent);
+    }
+
+    private String normalizeUrl(String url) {
+        if (url == null || url.isEmpty()) return URL_HOME;
+        if (url.contains("127.0.0.1") || url.contains("localhost")) return URL_HOME;
+        return url;
     }
 
     // ══════════════════════════════════════════════════════════
@@ -594,7 +604,7 @@ public class AionPushService extends Service {
                         if ("assistant".equals(role)) {
                             String c = data.optString("content", "");
                             if (c.length() > 100) c = c.substring(0, 100) + "...";
-                            showNotif(CH_MESSAGE, "💬 Aion", c, false);
+                            showNotif(CH_MESSAGE, "💬 Claude", c, false);
                         }
                     }
                     break;
@@ -696,12 +706,12 @@ public class AionPushService extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (nm == null) return;
 
-        NotificationChannel c1 = new NotificationChannel(CH_KEEPALIVE, "Aion Oloth 保活",
+        NotificationChannel c1 = new NotificationChannel(CH_KEEPALIVE, "Claude 保活",
                 NotificationManager.IMPORTANCE_LOW);
         c1.setShowBadge(false);
         nm.createNotificationChannel(c1);
 
-        NotificationChannel c2 = new NotificationChannel(CH_MESSAGE, "Aion Oloth 消息",
+        NotificationChannel c2 = new NotificationChannel(CH_MESSAGE, "Claude 消息",
                 NotificationManager.IMPORTANCE_DEFAULT);
         nm.createNotificationChannel(c2);
 
@@ -719,7 +729,7 @@ public class AionPushService extends Service {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CH_KEEPALIVE)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Aion Oloth")
+                .setContentTitle("Claude")
                 .setContentText(text)
                 .setContentIntent(pi)
                 .setOngoing(true)
@@ -749,11 +759,11 @@ public class AionPushService extends Service {
 
             while (shouldRun) {
                 try {
-                    if (hasUsageStatsPermission()) {
-                        reportForegroundApp();
-                    } else {
-                        Log.d(TAG, "📱 Usage access permission not granted");
+                    // 先判权限；即便判定失败也尝试读取一次（MIUI/HyperOS 上 AppOps 可能误判）
+                    if (!hasUsageStatsPermission()) {
+                        Log.d(TAG, "📱 Usage access permission check=false, try read anyway");
                     }
+                    reportForegroundApp();
                 } catch (Exception e) {
                     Log.e(TAG, "📱 activity error: " + e.getMessage());
                 }
@@ -769,12 +779,43 @@ public class AionPushService extends Service {
 
     private boolean hasUsageStatsPermission() {
         try {
+            AppOpsManager appOps = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            boolean appOpsAllowed = false;
+            if (appOps != null) {
+                int mode;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    mode = appOps.unsafeCheckOpNoThrow(
+                            AppOpsManager.OPSTR_GET_USAGE_STATS,
+                            android.os.Process.myUid(),
+                            getPackageName()
+                    );
+                } else {
+                    mode = appOps.checkOpNoThrow(
+                            AppOpsManager.OPSTR_GET_USAGE_STATS,
+                            android.os.Process.myUid(),
+                            getPackageName()
+                    );
+                }
+                appOpsAllowed = (mode == AppOpsManager.MODE_ALLOWED);
+            }
+
+            // MIUI/HyperOS 兼容：只要能实际读到 UsageStats，也视为已授权
+            boolean canReadStats = false;
             UsageStatsManager usm = (UsageStatsManager) getSystemService(Context.USAGE_STATS_SERVICE);
-            if (usm == null) return false;
-            long now = System.currentTimeMillis();
-            java.util.List<UsageStats> stats = usm.queryUsageStats(
-                    UsageStatsManager.INTERVAL_DAILY, now - 60_000, now);
-            return stats != null && !stats.isEmpty();
+            if (usm != null) {
+                long now = System.currentTimeMillis();
+                java.util.List<UsageStats> stats = usm.queryUsageStats(
+                        UsageStatsManager.INTERVAL_DAILY, now - 60 * 60_000, now);
+                if (stats != null && !stats.isEmpty()) {
+                    for (UsageStats s : stats) {
+                        if (s != null && s.getLastTimeUsed() > 0) {
+                            canReadStats = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            return appOpsAllowed || canReadStats;
         } catch (Exception e) {
             return false;
         }
@@ -789,12 +830,13 @@ public class AionPushService extends Service {
         // 方案一：UsageEvents（更可靠，能在后台获取真实的前台切换事件）
         String pkgName = null;
         try {
-            UsageEvents events = usm.queryEvents(now - 120_000, now);
+            UsageEvents events = usm.queryEvents(now - 10 * 60_000, now);
             UsageEvents.Event event = new UsageEvents.Event();
             while (events.hasNextEvent()) {
                 events.getNextEvent(event);
-                // ACTIVITY_RESUMED (=1 on older / =2) 表示 Activity 进入前台
+                // 不同 ROM / Android 版本事件值可能不同，兼容常见前台事件
                 if (event.getEventType() == UsageEvents.Event.ACTIVITY_RESUMED
+                        || event.getEventType() == UsageEvents.Event.MOVE_TO_FOREGROUND
                         || event.getEventType() == 1) {
                     pkgName = event.getPackageName();
                 }
@@ -806,7 +848,7 @@ public class AionPushService extends Service {
         // 方案二：如果 UsageEvents 没结果，fallback 到 queryUsageStats
         if (pkgName == null) {
             java.util.List<UsageStats> stats = usm.queryUsageStats(
-                    UsageStatsManager.INTERVAL_DAILY, now - 120_000, now);
+                    UsageStatsManager.INTERVAL_DAILY, now - 6 * 60 * 60_000, now);
             if (stats != null && !stats.isEmpty()) {
                 UsageStats recent = null;
                 for (UsageStats s : stats) {

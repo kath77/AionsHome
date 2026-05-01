@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 聊天核心路由：对话 CRUD、消息 CRUD、send_message、regenerate
 """
@@ -37,6 +38,30 @@ THEATER_ITEM_PATTERN = re.compile(r'\[剧场道具[：:]([^\]]+)\]')
 _SYSTEM_MSG_CONTEXT_KEYWORDS = ('查看了监控', '搜索了', '点歌', '点了一首', '推荐了', '查看了动态', '视频通话')
 from music import search_songs, get_audio_url
 from schedule import process_schedule_commands, get_active_schedules, build_schedule_prompt
+
+async def _get_default_worldbook_id() -> Optional[str]:
+    async with get_db() as db:
+        db.row_factory = __import__('aiosqlite').Row
+        cur = await db.execute("SELECT id FROM worldbooks WHERE is_default=1 LIMIT 1")
+        row = await cur.fetchone()
+        return row["id"] if row else None
+
+async def _load_worldbook_for_conv(conv_id: str | None) -> dict:
+    if conv_id:
+        async with get_db() as db:
+            db.row_factory = __import__('aiosqlite').Row
+            cur = await db.execute(
+                "SELECT w.* FROM conversations c LEFT JOIN worldbooks w ON c.worldbook_id=w.id WHERE c.id=?",
+                (conv_id,),
+            )
+            row = await cur.fetchone()
+            if row and row["id"]:
+                d = dict(row)
+                d.pop("is_default", None)
+                d.pop("created_at", None)
+                d.pop("updated_at", None)
+                return d
+    return load_worldbook()
 
 
 def _process_voice_attachments_in_history(history: list, keep_idx: int = -1):
@@ -91,7 +116,7 @@ TOY_PRESET_NAMES = {1:'微风轻拂',2:'春水初生',3:'暗流涌动',4:'如梦
 
 async def _toy_sys_msg(conv_id: str, commands: list):
     """为玩具指令插入系统消息"""
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     ai_name = wb.get("ai_name", "AI")
     for cmd in commands:
         if cmd == 'STOP':
@@ -114,7 +139,7 @@ async def _toy_sys_msg(conv_id: str, commands: list):
 
 async def _video_call_incoming_sys_msg(conv_id: str):
     """AI 发起视频通话时插入系统消息"""
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     ai_name = wb.get("ai_name", "AI")
     text = f"📹 {ai_name}打来了视频电话"
     now = time.time()
@@ -146,7 +171,7 @@ async def _video_call_outgoing_sys_msg(conv_id: str):
 
 async def _video_call_sys_msg(conv_id: str, duration: int):
     """为视频通话插入系统消息，显示通话时长"""
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     ai_name = wb.get("ai_name", "AI")
     mins = duration // 60
     secs = duration % 60
@@ -166,7 +191,7 @@ async def _video_call_sys_msg(conv_id: str, duration: int):
 
 async def _music_sys_msg(conv_id: str, music_cards: list):
     """为点歌操作插入系统消息，使后续上下文能看到点歌信息"""
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     ai_name = wb.get("ai_name", "AI")
     parts = [f"《{s['name']}》- {s['artist']}" for s in music_cards]
     text = f"🎵 {ai_name}点了一首{' / '.join(parts)}"
@@ -186,10 +211,12 @@ async def _music_sys_msg(conv_id: str, music_cards: list):
 class ConvCreate(BaseModel):
     title: str = "新对话"
     model: str = DEFAULT_MODEL
+    worldbook_id: Optional[str] = None
 
 class ConvUpdate(BaseModel):
     title: Optional[str] = None
     model: Optional[str] = None
+    worldbook_id: Optional[str] = None
 
 class MsgCreate(BaseModel):
     content: str
@@ -233,13 +260,14 @@ async def list_conversations():
 async def create_conversation(body: ConvCreate):
     now = time.time()
     conv_id = f"conv_{int(now*1000)}"
+    worldbook_id = body.worldbook_id or await _get_default_worldbook_id()
     async with get_db() as db:
         await db.execute(
-            "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?,?,?,?,?)",
-            (conv_id, body.title, body.model, now, now)
+            "INSERT INTO conversations (id, title, model, worldbook_id, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            (conv_id, body.title, body.model, worldbook_id, now, now)
         )
         await db.commit()
-    conv = {"id": conv_id, "title": body.title, "model": body.model, "created_at": now, "updated_at": now}
+    conv = {"id": conv_id, "title": body.title, "model": body.model, "worldbook_id": worldbook_id, "created_at": now, "updated_at": now}
     await manager.broadcast({"type": "conv_created", "data": conv})
     await export_conversation(conv_id)
     return conv
@@ -253,8 +281,29 @@ async def update_conversation(conv_id: str, body: ConvUpdate):
         if body.model is not None:
             await db.execute("UPDATE conversations SET model=?, updated_at=? WHERE id=?",
                              (body.model, time.time(), conv_id))
+        if body.worldbook_id is not None:
+            await db.execute("UPDATE conversations SET worldbook_id=?, updated_at=? WHERE id=?",
+                             (body.worldbook_id, time.time(), conv_id))
         await db.commit()
     await manager.broadcast({"type": "conv_updated", "data": {"id": conv_id, **(body.dict(exclude_none=True))}})
+    await export_conversation(conv_id)
+    return {"ok": True}
+
+@router.put("/api/conversations/{conv_id}/worldbook")
+async def switch_conversation_worldbook(conv_id: str, body: dict):
+    worldbook_id = (body or {}).get("worldbook_id")
+    if not worldbook_id:
+        return {"ok": False, "error": "worldbook_id required"}
+    async with get_db() as db:
+        db.row_factory = __import__('aiosqlite').Row
+        cur = await db.execute("SELECT id FROM worldbooks WHERE id=?", (worldbook_id,))
+        wb = await cur.fetchone()
+        if not wb:
+            return {"ok": False, "error": "worldbook not found"}
+        await db.execute("UPDATE conversations SET worldbook_id=?, updated_at=? WHERE id=?",
+                         (worldbook_id, time.time(), conv_id))
+        await db.commit()
+    await manager.broadcast({"type": "conv_updated", "data": {"id": conv_id, "worldbook_id": worldbook_id}})
     await export_conversation(conv_id)
     return {"ok": True}
 
@@ -489,7 +538,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
 
     actual_recent = [m for m in history if m["role"] in ("user", "assistant")][-3:]
 
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
@@ -917,7 +966,7 @@ async def send_message(conv_id: str, body: MsgCreate):
     # 语音消息此时 content 已包含转写文本，哨兵直接分析文本
     actual_recent = [m for m in history if m["role"] in ("user", "assistant")][-3:]
 
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
@@ -1585,7 +1634,7 @@ async def perform_poi_check(conv_id: str, model_key: str, categories: list[str])
     poi_text = "\n".join(result_lines)
 
     # 5. 构建消息上下文，携带 POI 搜索结果，让 Core 追加一轮回复
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     user_name = wb.get("user_name", "用户")
     ai_name = wb.get("ai_name", "AI")
 
@@ -1702,7 +1751,7 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
     if not summary_text:
         summary_text = "（当前没有设备活动记录）"
 
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     user_name = wb.get("user_name", "用户")
     ai_name = wb.get("ai_name", "AI")
     minutes = n * 10
@@ -1852,7 +1901,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
     # 即时哨兵：取最近实际对话用于状态更新 + 关键词提取
     actual_recent = [m for m in history if m["role"] in ("user", "assistant")][-3:]
 
-    wb = load_worldbook()
+    wb = await _load_worldbook_for_conv(conv_id)
     prefix = []
     if wb.get("ai_persona"):
         prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})

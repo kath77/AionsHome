@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 陪伴阅读 API 路由
 - 书籍上传/列表/详情/删除

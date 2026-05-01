@@ -1,8 +1,9 @@
+from __future__ import annotations
 """
 设备活动日志：上报接收、JSONL 存储、自动清理（保留最近 N 小时）、PC 活动窗口采集、10 分钟摘要
 """
 
-import json, time, threading, logging
+import json, time, threading, logging, subprocess
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -274,14 +275,20 @@ class PCActivityTracker:
         if self._thread and self._thread.is_alive():
             print("[PCActivity] 线程已在运行，跳过", flush=True)
             return
-        try:
-            import win32gui  # noqa: F401
-            print("[PCActivity] win32gui 导入成功", flush=True)
-        except ImportError:
-            print("[PCActivity] pywin32 未安装，PC 活动采集已禁用", flush=True)
-            return
-        except Exception as e:
-            print(f"[PCActivity] win32gui 导入失败: {e}", flush=True)
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui  # noqa: F401
+                print("[PCActivity] win32gui 导入成功", flush=True)
+            except ImportError:
+                print("[PCActivity] pywin32 未安装，PC 活动采集已禁用", flush=True)
+                return
+            except Exception as e:
+                print(f"[PCActivity] win32gui 导入失败: {e}", flush=True)
+                return
+        elif sys.platform == "darwin":
+            print("[PCActivity] 使用 macOS 前台窗口采集", flush=True)
+        else:
+            print(f"[PCActivity] 当前平台暂不支持 PC 活动采集: {sys.platform}", flush=True)
             return
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="PCActivity")
@@ -295,26 +302,39 @@ class PCActivityTracker:
             self._thread = None
 
     def _loop(self):
-        try:
-            import win32gui
-            import win32process
-        except Exception as e:
-            print(f"[PCActivity] ❌ 线程内导入失败: {e}")
-            self._running = False
-            return
+        import sys
+        win32gui = None
+        win32process = None
+        if sys.platform.startswith("win"):
+            try:
+                import win32gui as _win32gui
+                import win32process as _win32process
+                win32gui = _win32gui
+                win32process = _win32process
+            except Exception as e:
+                print(f"[PCActivity] ❌ 线程内导入失败: {e}")
+                self._running = False
+                return
         import time as _time
 
         print(f"[PCActivity] 采集线程已进入循环 (pid={__import__('os').getpid()})", flush=True)
 
         while self._running:
             try:
-                hwnd = win32gui.GetForegroundWindow()
-                title = win32gui.GetWindowText(hwnd)
+                app_name = ""
+                title = ""
+                if sys.platform.startswith("win"):
+                    hwnd = win32gui.GetForegroundWindow()
+                    title = win32gui.GetWindowText(hwnd)
+                    if title and title != "Program Manager":
+                        app_name = self._get_process_name(hwnd, win32process)
+                elif sys.platform == "darwin":
+                    app_name, title = self._get_active_window_macos()
+                else:
+                    title = ""
 
-                # 忽略空标题和桌面（Program Manager 是 Windows 桌面，无意义）
-                if title and title != "Program Manager":
-                    # 尝试获取进程名
-                    app_name = self._get_process_name(hwnd, win32process)
+                # 忽略空标题
+                if title:
                     title_changed = title != self._last_title
 
                     now = _time.time()
@@ -378,6 +398,36 @@ class PCActivityTracker:
         # fallback: 无 psutil 时返回通用名称
         return "Unknown"
 
+    @staticmethod
+    def _get_active_window_macos() -> tuple[str, str]:
+        """获取 macOS 前台应用和窗口标题（需系统辅助功能权限）"""
+        script = '''
+tell application "System Events"
+    set frontApp to first application process whose frontmost is true
+    set appName to name of frontApp
+    try
+        set winTitle to name of front window of frontApp
+    on error
+        set winTitle to ""
+    end try
+    return appName & "|||" & winTitle
+end tell
+'''
+        try:
+            out = subprocess.check_output(["osascript", "-e", script], text=True, timeout=3).strip()
+            if "|||" in out:
+                app_name, title = out.split("|||", 1)
+                app_name = (app_name or "").strip()
+                title = (title or "").strip()
+                if not title:
+                    title = app_name
+                return app_name or "macOS", title
+            if out:
+                return "macOS", out
+        except Exception:
+            pass
+        return "macOS", ""
+
 
 # ── 10 分钟活动摘要 ──────────────────────────────────
 
@@ -388,6 +438,12 @@ _APP_DISPLAY_MAP = {
     "notepad++.exe": "Notepad++", "Notepad.exe": "记事本",
     "ApplicationFrameHost.exe": None,  # 由标题决定，_extract_hints 会提取
     "screen_off": "锁屏", "screen_on": "亮屏",
+}
+
+# 系统类应用：仅在持续时间较长时才在摘要中展示，避免喧宾夺主
+_SYSTEM_APPS_LOW_PRIORITY = {
+    "设置", "系统设置", "System Settings", "Settings",
+    "锁屏", "亮屏", "系统界面", "System UI"
 }
 
 
@@ -480,8 +536,17 @@ def _summarize_window(entries: list[dict], window_start_ts: float, window_end_ts
 
     # 注入 carry_forward：如果某设备在窗口内有数据但第一条不在窗口起始，
     # 或者窗口内没数据但 carry_forward 有记录，补一条起始状态
+    # 为避免“旧状态被无限续写”，仅在最近短时间内的状态才允许续写。
+    _MAX_CARRY_AGE = {
+        "phone": 150,  # 手机上报间隔约 60s，允许最多 2~3 个间隔续写
+        "pc": 180,     # PC 采集默认 60s，给少量抖动冗余
+    }
     if carry_forward:
         for device, prev_entry in carry_forward.items():
+            age = window_start_ts - float(prev_entry.get("timestamp", 0))
+            if age > _MAX_CARRY_AGE.get(device, 150):
+                # 太久没有新上报，认为状态未知，不再延长旧状态
+                continue
             dev_list = by_device.get(device, [])
             if dev_list:
                 earliest = min(e["timestamp"] for e in dev_list)
@@ -556,9 +621,13 @@ def _summarize_window(entries: list[dict], window_start_ts: float, window_end_ts
 
         # ③ 按时长降序排列（主要活动排前面）
         sorted_apps = sorted(merged_order, key=lambda k: merged_dur[k], reverse=True)
+        non_system_exists = any(k not in _SYSTEM_APPS_LOW_PRIORITY for k in sorted_apps)
 
         app_descs = []
         for dkey in sorted_apps:
+            # 系统应用降权：如果同时有非系统应用，且系统应用停留不足 4 分钟则不展示
+            if dkey in _SYSTEM_APPS_LOW_PRIORITY and non_system_exists and merged_dur[dkey] < 240:
+                continue
             dur_str = _format_duration(merged_dur[dkey])
             titles = merged_titles[dkey]
             raw_apps = merged_raw[dkey]

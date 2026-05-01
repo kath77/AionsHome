@@ -8,57 +8,139 @@
 <link rel="manifest" href="/manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#ff8359">
+<style>
+.wb-top{display:flex;gap:8px;align-items:center;margin-bottom:14px}
+.wb-top select{flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;outline:none}
+.wb-btn{border:1px solid var(--border);background:rgba(255,255,255,.45);border-radius:9px;padding:8px 10px;cursor:pointer;font-size:13px;white-space:nowrap}
+.wb-btn.primary{border-color:#ff8359;color:#ff8359}
+</style>
 </head>
 <body>
 <div class="sub-page">
   <div class="top-bar">
     <button class="back-btn" onclick="location.href='/'">⬅</button>
-    <h2>📖 世界书</h2>
+    <h2>📖 世界书管理</h2>
   </div>
   <div class="page-content">
+    <div class="wb-top">
+      <select id="wbSelect" onchange="onSelectWorldbook()"><option value="">加载中...</option></select>
+      <button class="wb-btn primary" onclick="setDefaultCurrent()">设默认</button>
+      <button class="wb-btn" onclick="removeCurrent()">删除</button>
+      <button class="wb-btn" onclick="createWorldbook()">新建</button>
+    </div>
+
+    <label class="form-label">名称</label>
+    <input class="form-input" type="text" id="wbName" placeholder="例如：日常陪伴" autocomplete="off">
     <label class="form-label">AI 名字</label>
     <input class="form-input" type="text" id="wbAiName" placeholder="默认：AI" autocomplete="off">
     <label class="form-label">用户名字</label>
     <input class="form-input" type="text" id="wbUserName" placeholder="默认：你" autocomplete="off">
     <label class="form-label">AI 人设</label>
-    <div class="form-hint">设定 AI 的性格、角色、行为规则等</div>
-    <textarea class="form-input" id="wbAiPersona" placeholder="例如：你是一个叫小星的AI助手，语气活泼可爱..."></textarea>
+    <textarea class="form-input" id="wbAiPersona"></textarea>
     <label class="form-label">用户人设</label>
-    <div class="form-hint">关于你自己的信息，AI 会以此为参考</div>
-    <textarea class="form-input" id="wbUserPersona" placeholder="例如：我叫小明，喜欢编程和游戏..."></textarea>
+    <textarea class="form-input" id="wbUserPersona"></textarea>
     <label class="form-label">系统提示</label>
-    <div class="form-hint">额外的行为规则或提示词，每次对话都会发送给模型（可留空）</div>
-    <textarea class="form-input" id="wbSystemPrompt" placeholder="例如：时间感知：每次收到消息，先计算与上一条消息的时间差..."></textarea>
+    <textarea class="form-input" id="wbSystemPrompt"></textarea>
     <div class="btn-row">
-      <button class="btn-cancel" onclick="location.href='/'">取消</button>
-      <button class="btn-save" onclick="saveWorldBook()">保存</button>
+      <button class="btn-cancel" onclick="location.href='/'">关闭</button>
+      <button class="btn-save" onclick="saveWorldbook()">保存当前</button>
     </div>
   </div>
 </div>
 <script src="/static/common.js"></script>
 <script>
 connectCommonWS();
+let worldbooks = [];
+let currentId = "";
 
-(async function init() {
-  const wb = await api("GET", "/api/worldbook");
-  $("wbAiName").value = wb.ai_name || "";
-  $("wbUserName").value = wb.user_name || "";
-  $("wbAiPersona").value = wb.ai_persona || "";
-  $("wbUserPersona").value = wb.user_persona || "";
-  $("wbSystemPrompt").value = wb.system_prompt || "";
-})();
+function _current(){ return worldbooks.find(x => x.id === currentId); }
 
-async function saveWorldBook() {
-  const wb = {
-    ai_name: $("wbAiName").value.trim() || "AI",
-    user_name: $("wbUserName").value.trim() || "你",
-    ai_persona: $("wbAiPersona").value,
-    user_persona: $("wbUserPersona").value,
-    system_prompt: $("wbSystemPrompt").value
-  };
-  await api("PUT", "/api/worldbook", wb);
-  showToast("✅ 世界书已保存");
+function fillForm(w){
+  if (!w) return;
+  currentId = w.id;
+  $('wbName').value = w.name || '';
+  $('wbAiName').value = w.ai_name || '';
+  $('wbUserName').value = w.user_name || '';
+  $('wbAiPersona').value = w.ai_persona || '';
+  $('wbUserPersona').value = w.user_persona || '';
+  $('wbSystemPrompt').value = w.system_prompt || '';
+  $('wbSelect').value = w.id;
 }
+
+function renderSelect(){
+  const sel = $('wbSelect');
+  if (!worldbooks.length) {
+    sel.innerHTML = '<option value="">暂无世界书</option>';
+    return;
+  }
+  sel.innerHTML = worldbooks.map(w => `<option value="${w.id}">${escHtml(w.name || '未命名世界书')}${w.is_default ? '（默认）' : ''}</option>`).join('');
+}
+
+async function loadWorldbooks(){
+  worldbooks = await api('GET','/api/worldbooks');
+  renderSelect();
+  if (currentId && worldbooks.find(w=>w.id===currentId)) {
+    fillForm(worldbooks.find(w=>w.id===currentId));
+    return;
+  }
+  const d = worldbooks.find(w => w.is_default) || worldbooks[0];
+  if (d) fillForm(d);
+}
+
+function onSelectWorldbook(){
+  const id = $('wbSelect').value;
+  const w = worldbooks.find(x => x.id === id);
+  if (w) fillForm(w);
+}
+
+async function createWorldbook(){
+  const item = await api('POST','/api/worldbooks',{
+    name: `世界书${worldbooks.length + 1}`,
+    ai_name: 'AI',
+    user_name: '你',
+    ai_persona: '',
+    user_persona: '',
+    system_prompt: ''
+  });
+  await loadWorldbooks();
+  const w = worldbooks.find(x => x.id === item.id);
+  if (w) fillForm(w);
+  showToast('已新建');
+}
+
+async function setDefaultCurrent(){
+  if (!currentId) return;
+  await api('PUT',`/api/worldbooks/${currentId}/default`);
+  await loadWorldbooks();
+  showToast('已设为默认');
+}
+
+async function removeCurrent(){
+  if (!currentId) return;
+  if (!confirm('确定删除当前世界书？')) return;
+  const id = currentId;
+  const res = await api('DELETE',`/api/worldbooks/${id}`);
+  if (res && res.error){ showToast(res.error); return; }
+  currentId = '';
+  await loadWorldbooks();
+  showToast('已删除');
+}
+
+async function saveWorldbook(){
+  if (!currentId){ showToast('请先选择世界书'); return; }
+  await api('PUT',`/api/worldbooks/${currentId}`,{
+    name: $('wbName').value.trim() || '未命名世界书',
+    ai_name: $('wbAiName').value.trim() || 'AI',
+    user_name: $('wbUserName').value.trim() || '你',
+    ai_persona: $('wbAiPersona').value,
+    user_persona: $('wbUserPersona').value,
+    system_prompt: $('wbSystemPrompt').value
+  });
+  await loadWorldbooks();
+  showToast('已保存');
+}
+
+loadWorldbooks();
 </script>
 </body>
 </html>

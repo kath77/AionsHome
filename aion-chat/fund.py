@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 奥罗斯财团 — 基金持仓监控核心模块
 - 数据拉取（akshare）

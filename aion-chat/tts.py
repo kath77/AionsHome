@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 服务端流式 TTS 模块
 - 按句子边界切分 AI 回复文本

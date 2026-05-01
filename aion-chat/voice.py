@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 语音唤醒 + 半双工通话模块
 - sounddevice 录音

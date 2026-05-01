@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 记忆库 CRUD API + 手动总结 + 原文追溯
 """

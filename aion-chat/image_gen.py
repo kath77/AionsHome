@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 AI 生图模块：Gemini gemini-3.1-flash-image-preview 生成图片
 支持 SELFIE（带参考图）和 DRAW（纯文本）两种模式
