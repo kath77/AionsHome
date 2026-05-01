@@ -226,6 +226,7 @@ class MsgCreate(BaseModel):
     fast_mode: bool = False
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    thinking_level: Optional[str] = None
     tts_enabled: bool = False
     tts_voice: str = ""
     client_id: str = ""
@@ -240,6 +241,7 @@ class MsgEditResend(BaseModel):
     whisper_mode: bool = False
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    thinking_level: Optional[str] = None
     tts_enabled: bool = False
     tts_voice: str = ""
     client_id: str = ""
@@ -685,7 +687,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
             try:
-                async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, cancel_event=cancel_event):
+                async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, thinking_level=body.thinking_level, cancel_event=cancel_event):
                     full_text += chunk
                     await _q.put({"type": "chunk", "content": chunk})
                     if tts_streamer:
@@ -1180,7 +1182,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
             try:
-                async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, cancel_event=cancel_event):
+                async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, thinking_level=body.thinking_level, cancel_event=cancel_event):
                     full_text += chunk
                     await _q.put({"type": "chunk", "content": chunk})
                     if tts_streamer:
@@ -1857,7 +1859,7 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
 
 # ── 重新生成 AI 回复 ──────────────────────────────
 @router.post("/api/conversations/{conv_id}/regenerate")
-async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, tts_enabled: bool = False, tts_voice: str = ""):
+async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode: bool = False, fast_mode: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None, thinking_level: Optional[str] = None, tts_enabled: bool = False, tts_voice: str = ""):
     async with get_db() as db:
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
@@ -2068,7 +2070,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         try:
             await _q.put({"id": ai_msg_id, "type": "start"})
             try:
-                async for chunk in stream_ai(history, model_key, usage_meta, temperature, max_tokens=max_tokens, cancel_event=cancel_event):
+                async for chunk in stream_ai(history, model_key, usage_meta, temperature, max_tokens=max_tokens, thinking_level=thinking_level, cancel_event=cancel_event):
                     full_text += chunk
                     await _q.put({"type": "chunk", "content": chunk})
                     if regen_tts:

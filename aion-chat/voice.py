@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import io, wave, time, threading, asyncio, re
 import numpy as np
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
 import httpx
 import webrtcvad
 
@@ -69,6 +72,17 @@ class VoiceWakeup:
 
     def start(self, wake_word: str = "老公"):
         """开启语音监听"""
+        if sd is None:
+            print("[Voice] sounddevice/PortAudio 不可用，语音监听已禁用")
+            self.enabled = False
+            self.in_call = False
+            self.ai_speaking = False
+            self._broadcast_state("voice_state", {
+                "enabled": False,
+                "status": "off",
+                "message": "语音依赖不可用（缺少 PortAudio）",
+            })
+            return
         if self._thread and self._thread.is_alive():
             return
         self.wake_word = wake_word

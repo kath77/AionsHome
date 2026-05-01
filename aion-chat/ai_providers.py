@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-from config import get_key, MODELS, UPLOADS_DIR, SETTINGS
+from config import get_key, MODELS, UPLOADS_DIR, SETTINGS, get_active_relay, DEFAULT_AIPRO_BASE_URL
 
 
 # ── 多模态消息构建 ────────────────────────────────
@@ -143,12 +143,17 @@ async def call_gemini(messages: list, model: str, meta: dict | None = None, temp
 
 # ── AiPro 中转站 ────────────────────────────────────────
 async def call_aipro(messages: list, model: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None):
-    base_url = (SETTINGS.get("aipro_base_url") or "https://key.simpleai.com.cn/v1").strip().rstrip("/")
+    relay = get_active_relay() or {}
+    base_url = (relay.get("base_url") or SETTINGS.get("aipro_base_url") or DEFAULT_AIPRO_BASE_URL).strip().rstrip("/")
+    api_key = (relay.get("api_key") or get_key("aipro")).strip()
+    if not api_key:
+        yield "[中转站错误] 未配置可用中转站 API Key"
+        return
     if base_url.endswith("/chat/completions"):
         url = base_url
     else:
         url = f"{base_url}/chat/completions"
-    headers = {"Authorization": f"Bearer {get_key('aipro')}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     api_messages = build_multimodal_messages(messages)
     payload = {"model": model, "messages": api_messages, "stream": True}
     if temperature is not None:
@@ -184,6 +189,72 @@ async def call_aipro(messages: list, model: str, meta: dict | None = None, tempe
                     except:
                         pass
 
+
+def _build_deepseek_thinking_payload(thinking_level: str | None):
+    level = (thinking_level or "").strip().lower()
+    if not level or level == "off":
+        return {"type": "disabled"}, None
+    # DeepSeek 文档当前仅明确支持 reasoning_effort: high/max。
+    if level in ("xhigh", "max"):
+        return {"type": "enabled"}, "max"
+    return {"type": "enabled"}, "high"
+
+
+async def call_deepseek(messages: list, model: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, thinking_level: str | None = None):
+    base_url = (SETTINGS.get("deepseek_base_url") or "https://api.deepseek.com").strip().rstrip("/")
+    api_key = (get_key("deepseek") or "").strip()
+    if not api_key:
+        relay = get_active_relay() or {}
+        relay_base = str(relay.get("base_url") or "").strip().rstrip("/")
+        if "api.deepseek.com" in relay_base:
+            api_key = str(relay.get("api_key") or "").strip()
+    if not api_key:
+        yield "[DeepSeek错误] 未配置 API Key"
+        return
+    if base_url.endswith("/chat/completions"):
+        url = base_url
+    else:
+        url = f"{base_url}/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    api_messages = build_multimodal_messages(messages)
+    payload = {"model": model, "messages": api_messages, "stream": True}
+    thinking_obj, reasoning_effort = _build_deepseek_thinking_payload(thinking_level)
+    payload["thinking"] = thinking_obj
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream("POST", url, json=payload, headers=headers) as resp:
+            if resp.status_code != 200:
+                body = await resp.aread()
+                try:
+                    err = json.loads(body).get("error", {}).get("message", body.decode())
+                except:
+                    err = body.decode(errors="replace")[:500]
+                yield f"[DeepSeek错误 {resp.status_code}] {err}"
+                return
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        return
+                    try:
+                        chunk = json.loads(data)
+                        if meta is not None and "usage" in chunk and chunk["usage"]:
+                            u = chunk["usage"]
+                            meta["prompt_tokens"] = u.get("prompt_tokens", 0)
+                            meta["completion_tokens"] = u.get("completion_tokens", 0)
+                            meta["total_tokens"] = u.get("total_tokens", 0)
+                            meta["raw"] = u
+                        delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
+                        if "content" in delta and delta["content"]:
+                            yield delta["content"]
+                    except:
+                        pass
+
 # ── 非流式调用（收集流式输出） ────────────────────
 async def simple_ai_call(messages: list, model_key: str, temperature: float | None = None) -> str:
     """收集 stream_ai 的全部 chunk，返回完整文本"""
@@ -194,7 +265,7 @@ async def simple_ai_call(messages: list, model_key: str, temperature: float | No
 
 
 # ── 统一调度 ──────────────────────────────────────
-async def stream_ai(messages: list, model_key: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, cancel_event=None):
+async def stream_ai(messages: list, model_key: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, thinking_level: str | None = None, cancel_event=None):
     normalized = []
     for m in messages:
         nm = dict(m)
@@ -219,6 +290,11 @@ async def stream_ai(messages: list, model_key: str, meta: dict | None = None, te
             yield chunk
     elif cfg["provider"] == "aipro":
         async for chunk in call_aipro(normalized, cfg["model"], meta, temperature, max_tokens):
+            if cancel_event and cancel_event.is_set():
+                return
+            yield chunk
+    elif cfg["provider"] == "deepseek":
+        async for chunk in call_deepseek(normalized, cfg["model"], meta, temperature, max_tokens, thinking_level):
             if cancel_event and cancel_event.is_set():
                 return
             yield chunk

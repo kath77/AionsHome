@@ -992,6 +992,16 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
     <div class="config-popup" id="configPopup">
       <label>模型</label>
       <select id="modelSelect" onchange="changeModel()"></select>
+      <label>Thinking 等级</label>
+      <select id="thinkingLevelSelect" onchange="onThinkingLevelChange()">
+        <option value="off">off</option>
+        <option value="minimal">minimal</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select>
       <label>上下文数量</label>
       <div class="slider-row">
         <input type="range" id="contextSlider" min="1" max="100" value="30" oninput="document.getElementById('contextValue').textContent=this.value+'条'; localStorage.setItem('aion_context_limit', this.value)">
@@ -1155,6 +1165,8 @@ async function init() {
   // 恢复最大回复长度设置
   const savedMaxTokens = localStorage.getItem('aion_max_tokens');
   if (savedMaxTokens) { $("maxTokensSlider").value = savedMaxTokens; const v = parseInt(savedMaxTokens); $("maxTokensValue").textContent = v === 0 ? '不限' : v; }
+  const savedThinking = localStorage.getItem('aion_thinking_level');
+  if (savedThinking && $("thinkingLevelSelect")) $("thinkingLevelSelect").value = savedThinking;
   connectWS();
   // 滚动到顶部自动加载更早消息
   $("messages").addEventListener("scroll", function() {
@@ -1164,6 +1176,15 @@ async function init() {
   if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
   }
+}
+
+function onThinkingLevelChange() {
+  const v = $("thinkingLevelSelect")?.value || "off";
+  localStorage.setItem('aion_thinking_level', v);
+}
+
+function _getThinkingLevel() {
+  return $("thinkingLevelSelect")?.value || "off";
 }
 
 function escHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -3019,10 +3040,11 @@ async function send() {
     const contextLimit = parseInt($("contextSlider").value) || 30;
     const temperature = parseFloat($("tempSlider").value);
     const maxTokens = _getMaxTokens();
+    const thinkingLevel = _getThinkingLevel();
     const res = await fetch(`/api/conversations/${currentConvId}/send`, {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ content: text, context_limit: contextLimit, attachments, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
+      body: JSON.stringify({ content: text, context_limit: contextLimit, attachments, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, thinking_level: thinkingLevel, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
       signal: _abortController.signal
     });
 
@@ -3193,10 +3215,11 @@ async function saveEdit(id) {
     const contextLimit = parseInt($('contextSlider').value) || 30;
     const temperature = parseFloat($('tempSlider').value);
     const maxTokens = _getMaxTokens();
+    const thinkingLevel = _getThinkingLevel();
     const res = await fetch(`/api/messages/${id}/edit-resend`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ content: newText, context_limit: contextLimit, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
+      body: JSON.stringify({ content: newText, context_limit: contextLimit, whisper_mode: whisperMode, temperature, max_tokens: maxTokens, thinking_level: thinkingLevel, tts_enabled: ttsEnabled, tts_voice: ttsVoiceId, client_id: _clientId }),
       signal: _abortController.signal
     });
 
@@ -3343,8 +3366,10 @@ async function regenerateMsg(aiMsgId) {
     const cl = parseInt($("contextSlider").value) || 30;
     const temperature = parseFloat($("tempSlider").value);
     const maxTokens = _getMaxTokens();
+    const thinkingLevel = _getThinkingLevel();
     const mtParam = maxTokens ? `&max_tokens=${maxTokens}` : '';
-    const res = await fetch(`/api/conversations/${currentConvId}/regenerate?context_limit=${cl}&whisper_mode=${whisperMode}&temperature=${temperature}${mtParam}&tts_enabled=${ttsEnabled}&tts_voice=${encodeURIComponent(ttsVoiceId)}`, {
+    const tlParam = `&thinking_level=${encodeURIComponent(thinkingLevel)}`;
+    const res = await fetch(`/api/conversations/${currentConvId}/regenerate?context_limit=${cl}&whisper_mode=${whisperMode}&temperature=${temperature}${mtParam}${tlParam}&tts_enabled=${ttsEnabled}&tts_voice=${encodeURIComponent(ttsVoiceId)}`, {
       method: "POST", headers: {"Content-Type": "application/json"},
       signal: _abortController.signal
     });
