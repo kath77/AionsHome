@@ -1,3 +1,4 @@
+from __future__ import annotations
 """模拟外出测试脚本：发送假坐标让系统认为你在三里屯"""
 import asyncio, json, sys
 sys.path.insert(0, ".")

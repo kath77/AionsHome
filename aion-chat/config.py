@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 全局配置：路径、常量、settings / worldbook / chat_status 读写
 """
@@ -33,8 +34,18 @@ INDEX_PATH = CHATS_DIR / "_index.json"
 def load_settings():
     if SETTINGS_PATH.exists():
         with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    keys = {"gemini_key": "", "siliconflow_key": "", "gemini_free_key": "", "aipro_key": ""}
+            data = json.load(f)
+        if "aipro_base_url" not in data:
+            data["aipro_base_url"] = "https://key.simpleai.com.cn/v1"
+            save_settings(data)
+        return data
+    keys = {
+        "gemini_key": "",
+        "siliconflow_key": "",
+        "gemini_free_key": "",
+        "aipro_key": "",
+        "aipro_base_url": "https://key.simpleai.com.cn/v1",
+    }
     txt = BASE_DIR.parent / "所需要的API.txt"
     if txt.exists():
         with open(txt, "r", encoding="utf-8") as f:
@@ -118,15 +129,24 @@ def sanitize_filename(name):
 
 # ── 模型配置 ─────────────────────────────────────
 MODELS = {
+    "硅基GLM-5":        {"provider": "siliconflow", "model": "Pro/zai-org/GLM-5"},
     "硅基GLM-5.1":      {"provider": "siliconflow", "model": "Pro/zai-org/GLM-5.1"},
-    "硅基Kimi-K2.6":    {"provider": "siliconflow", "model": "Pro/moonshotai/Kimi-K2.6"},
+    "硅基Kimi-K2.5":    {"provider": "siliconflow", "model": "Pro/moonshotai/Kimi-K2.5"},
+    "gemini-3.1-flash-lite": {"provider": "gemini", "model": "gemini-3.1-flash-lite-preview"},
     "gemini-2.5-pro":  {"provider": "gemini", "model": "gemini-2.5-pro"},
     "gemini-3-flash":  {"provider": "gemini", "model": "gemini-3-flash-preview"},
     "gemini-3.1-pro":  {"provider": "gemini", "model": "gemini-3.1-pro-preview"},
     "claude-sonnet-4-6": {"provider": "aipro", "model": "claude-sonnet-4-6"},
+    "claude-opus-4-7":    {"provider": "aipro", "model": "claude-opus-4-7"},
     "claude-opus4.6":  {"provider": "aipro", "model": "claude-opus-4-6"},
+    "claude-opus-4-6":    {"provider": "aipro", "model": "claude-opus-4-6"},
+    "claude-opus4.6T":    {"provider": "aipro", "model": "claude-opus-4-6-thinking"},
+    "claude-sonnet-4-5-20250929": {"provider": "aipro", "model": "claude-sonnet-4-5-20250929"},
+    "claude-haiku-4-5-20251001":  {"provider": "aipro", "model": "claude-haiku-4-5-20251001"},
+    "claude-3-5-haiku-20241022":  {"provider": "aipro", "model": "claude-3-5-haiku-20241022"},
     "哈基米gpt-5.5":    {"provider": "aipro", "model": "gemini-3.1-pro-high"},
     "哈基米3.1pro":     {"provider": "aipro", "model": "gemini-3.1-pro-high"},
+    "哈基米2.5pro":    {"provider": "aipro", "model": "gemini-2.5-pro"},
     
 }
 

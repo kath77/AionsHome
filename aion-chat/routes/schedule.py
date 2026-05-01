@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 日程路由：列表 / 手动添加 / 删除
 """

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 网易云音乐集成：pyncm 搜索 + 获取歌曲信息
 支持 MUSIC_U Cookie 登录（VIP 可播放付费歌曲），未配置时退回匿名登录

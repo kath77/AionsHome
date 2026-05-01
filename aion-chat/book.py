@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 EPUB 解析模块 — 书籍导入、章节拆分、段落标注、图片提取
 """

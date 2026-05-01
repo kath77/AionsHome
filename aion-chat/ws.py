@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 WebSocket 连接管理器
 """

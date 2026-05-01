@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 定位 API 路由：心跳上报、状态查询、配置管理、POI搜索
 """

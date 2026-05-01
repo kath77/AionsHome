@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>翻转祝福卡片</title>
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #fff1f7, #e7f2ff);
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.wrapper {
+  perspective: 1200px;
+}
+
+.card {
+  width: 330px;
+  height: 460px;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.9s cubic-bezier(.2,.8,.2,1);
+  cursor: pointer;
+}
+
+.card:hover {
+  transform: rotateY(180deg);
+}
+
+.side {
+  position: absolute;
+  inset: 0;
+  border-radius: 30px;
+  backface-visibility: hidden;
+  overflow: hidden;
+  box-shadow: 0 28px 70px rgba(255, 110, 160, 0.24);
+}
+
+.front {
+  background:
+    radial-gradient(circle at 20% 20%, #fff 0 8%, transparent 9%),
+    radial-gradient(circle at 85% 18%, #fff 0 7%, transparent 8%),
+    linear-gradient(160deg, #ff9fc4, #ffc8dc 48%, #fff7fb);
+  padding: 32px;
+  text-align: center;
+  color: #fff;
+}
+
+.back {
+  background: #fff;
+  transform: rotateY(180deg);
+  padding: 34px 30px;
+  color: #3f465d;
+}
+
+.ribbon {
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  background: rgba(255,255,255,.35);
+  border-radius: 50%;
+  top: -65px;
+  right: -55px;
+}
+
+.front h1 {
+  margin-top: 36px;
+  font-size: 34px;
+  letter-spacing: 2px;
+  text-shadow: 0 4px 12px rgba(255, 82, 140, 0.25);
+}
+
+.front p {
+  font-size: 16px;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+
+.cake {
+  margin: 55px auto 0;
+  width: 150px;
+  height: 130px;
+  position: relative;
+}
+
+.layer {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  border-radius: 14px;
+}
+
+.layer.one {
+  width: 150px;
+  height: 52px;
+  bottom: 0;
+  background: #fff;
+}
+
+.layer.two {
+  width: 120px;
+  height: 46px;
+  bottom: 48px;
+  background: #ffe6ef;
+}
+
+.layer.three {
+  width: 86px;
+  height: 38px;
+  bottom: 90px;
+  background: #fff;
+}
+
+.candle {
+  position: absolute;
+  left: 50%;
+  bottom: 126px;
+  width: 12px;
+  height: 34px;
+  transform: translateX(-50%);
+  background: repeating-linear-gradient(
+    45deg,
+    #7aa7ff 0 5px,
+    #fff 5px 10px
+  );
+  border-radius: 4px;
+}
+
+.fire {
+  position: absolute;
+  left: 50%;
+  bottom: 158px;
+  width: 20px;
+  height: 28px;
+  transform: translateX(-50%);
+  background: #ffd36a;
+  border-radius: 50% 50% 50% 0;
+  rotate: -45deg;
+  animation: fire 0.8s ease-in-out infinite alternate;
+}
+
+.back h2 {
+  margin: 0 0 18px;
+  color: #ff639b;
+  font-size: 26px;
+}
+
+.back p {
+  line-height: 2;
+  font-size: 15px;
+  color: #5f667a;
+}
+
+.signature {
+  margin-top: 24px;
+  text-align: right;
+  color: #ff639b;
+  font-weight: 800;
+}
+
+.tip {
+  position: absolute;
+  bottom: 26px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: rgba(255,255,255,.9);
+  font-size: 14px;
+}
+
+@keyframes fire {
+  from {
+    transform: translateX(-50%) scale(0.9);
+    box-shadow: 0 0 12px #ffd36a;
+  }
+  to {
+    transform: translateX(-50%) scale(1.15);
+    box-shadow: 0 0 24px #ff9f43;
+  }
+}
+</style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="card">
+      <div class="side front">
+        <div class="ribbon"></div>
+        <h1>Happy Day</h1>
+        <p>把今天过成闪闪发光的一天</p>
+
+        <div class="cake">
+          <div class="fire"></div>
+          <div class="candle"></div>
+          <div class="layer three"></div>
+          <div class="layer two"></div>
+          <div class="layer one"></div>
+        </div>
+
+        <div class="tip">鼠标移上来翻开卡片</div>
+      </div>
+
+      <div class="side back">
+        <h2>给你的祝福</h2>
+        <p>
+          愿你眼里有光，心里有梦，<br />
+          每一个小小的愿望都慢慢实现。<br />
+          今天也要开心、漂亮、元气满满。
+        </p>
+        <p>
+          这张卡片可以替换成生日祝福、活动邀请、节日问候或品牌小卡片。
+        </p>
+        <div class="signature">From ABKE ✨</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

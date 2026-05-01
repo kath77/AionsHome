@@ -287,9 +287,12 @@ function renderGrid() {
   list.innerHTML = _allGifts.map((g, i) => {
     const d = new Date(g.created_at * 1000);
     const dateStr = `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+    const media = (g.gift_type === 'html')
+      ? `<div class="gift-thumb-img" style="background:#fff"><iframe style="width:100%;height:100%;border:none;display:block;background:#fff;pointer-events:none" sandbox="allow-same-origin" src="/api/gift/${g.id}/html"></iframe></div>`
+      : `<img class="gift-thumb-img" src="/uploads/${escHtml(g.image_path)}" alt="礼物" loading="lazy" />`;
     return `
       <div class="gift-thumb" id="thumb_${g.id}" onclick="openDetail(${i})">
-        <img class="gift-thumb-img" src="/uploads/${escHtml(g.image_path)}" alt="礼物" loading="lazy" />
+        ${media}
         <div class="gift-thumb-date">${dateStr}</div>
       </div>`;
   }).join('');
@@ -300,9 +303,12 @@ function openDetail(idx) {
   if (!g) return;
   const d = new Date(g.created_at * 1000);
   const dateStr = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+  const media = (g.gift_type === 'html')
+    ? `<div class="gift-detail-img" style="background:#fff;padding:0"><iframe style="width:100%;height:100%;border:none;display:block;background:#fff" sandbox="allow-same-origin" src="/api/gift/${g.id}/html"></iframe></div>`
+    : `<img class="gift-detail-img" src="/uploads/${escHtml(g.image_path)}" alt="礼物" />`;
   const box = document.getElementById('detailBox');
   box.innerHTML = `
-    <img class="gift-detail-img" src="/uploads/${escHtml(g.image_path)}" alt="礼物" />
+    ${media}
     <div class="gift-detail-body">
       <div class="gift-detail-date">${dateStr}</div>
       <div class="gift-detail-msg">${escHtml(g.message)}</div>

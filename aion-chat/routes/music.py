@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 音乐路由：搜索 + 获取歌曲信息 + 代理推流
 """

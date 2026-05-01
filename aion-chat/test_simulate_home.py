@@ -1,3 +1,4 @@
+from __future__ import annotations
 """恢复回家状态：发送家坐标让系统恢复 at_home"""
 import asyncio, json, sys
 sys.path.insert(0, ".")

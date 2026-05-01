@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 小剧场路由：完全独立于主聊天，不涉及记忆库 / 系统能力 / 日程 / 摄像头等
 仅保留：对话 CRUD、消息 CRUD、SSE 流式 AI 回复、TTS

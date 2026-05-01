@@ -1,8 +1,10 @@
+from __future__ import annotations
 """
 礼物系统 API 路由
 """
 
 from fastapi import APIRouter
+from fastapi.responses import HTMLResponse
 from gift import get_pending_gifts, receive_gift, list_gifts, delete_gift
 
 router = APIRouter(prefix="/api/gift", tags=["gift"])
@@ -27,6 +29,21 @@ async def api_list():
     """查询所有已领取的礼物（陈列馆）"""
     gifts = await list_gifts()
     return {"ok": True, "gifts": gifts}
+
+
+@router.get("/{gift_id}/html")
+async def api_gift_html(gift_id: str):
+    """返回 HTML 礼物内容（供 iframe 渲染）"""
+    import aiosqlite
+    from database import get_db
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT gift_type, html_content FROM gifts WHERE id=?", (gift_id,))
+        row = await cur.fetchone()
+    if not row or row["gift_type"] != "html":
+        return HTMLResponse("<div style='padding:12px;color:#666'>该礼物不是HTML形态</div>", status_code=404)
+    html = row["html_content"] or ""
+    return HTMLResponse(html)
 
 
 @router.delete("/{gift_id}")
@@ -95,6 +112,6 @@ async def api_test():
     from gift import judge_and_send_gift
     await judge_and_send_gift(
         all_summaries, context_msgs, persona_block,
-        ai_name, user_name, model_key, conv_id,
+        ai_name, user_name, model_key, conv_id, force_give=True,
     )
     return {"ok": True, "message": "测试送礼流程已触发，请等待AI判断和生图..."}

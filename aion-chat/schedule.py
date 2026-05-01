@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 日程 / 闹铃管理器
 - 后台线程每 30 秒扫描一次到期的闹铃
@@ -18,6 +19,7 @@ from memory import recall_memories
 from music import search_songs, get_audio_url
 from routes.music import MUSIC_CMD_PATTERN
 from tts import TTSStreamer
+from activity import get_activity_summary_for_prompt
 
 log = logging.getLogger("schedule")
 
@@ -77,6 +79,7 @@ class ScheduleManager:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._running = False
+        self._last_proactive_check = 0.0
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
@@ -123,6 +126,14 @@ class ScheduleManager:
             await self._fire_alarm(item)
         for item in due_monitors:
             await self._fire_monitor(item)
+        # 主动联系触发器（每 5 分钟检查一次）
+        now_ts = time.time()
+        if now_ts - self._last_proactive_check >= 300:
+            self._last_proactive_check = now_ts
+            try:
+                await _run_proactive_triggers()
+            except Exception as e:
+                log.error("proactive trigger error: %s", e)
 
     # ── 触发闹铃 ─────────────────────────────────
     async def _fire_alarm(self, item: dict):
@@ -675,3 +686,324 @@ def build_schedule_prompt(schedules: list[dict]) -> str:
 
 # ── 单例 ──────────────────────────────────────────
 schedule_mgr = ScheduleManager()
+
+
+async def _latest_conv_and_model():
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT id, model FROM conversations ORDER BY updated_at DESC LIMIT 1")
+        row = await cur.fetchone()
+        if not row:
+            return None, DEFAULT_MODEL
+        return row["id"], (row["model"] or DEFAULT_MODEL)
+
+
+async def _last_msg_ts(role: str = "user") -> float:
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT created_at FROM messages WHERE role=? ORDER BY created_at DESC LIMIT 1", (role,))
+        row = await cur.fetchone()
+        return float(row["created_at"]) if row else 0.0
+
+
+async def _fired_recent(trigger_key: str, cooldown_sec: int) -> bool:
+    cutoff = time.time() - cooldown_sec
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT 1 FROM proactive_events WHERE trigger_key=? AND fired_at>=? ORDER BY fired_at DESC LIMIT 1",
+            (trigger_key, cutoff),
+        )
+        return (await cur.fetchone()) is not None
+
+
+async def _mark_fired(trigger_key: str, conv_id: str, note: str = ""):
+    now = time.time()
+    eid = f"pe_{int(now*1000)}"
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO proactive_events (id, trigger_key, fired_at, conv_id, note) VALUES (?,?,?,?,?)",
+            (eid, trigger_key, now, conv_id, note[:300]),
+        )
+        await db.commit()
+
+def _default_proactive_config() -> dict:
+    return {
+        "inactivity": {"hours": 6, "cooldown_min": 720},
+        "routine": {"cooldown_hours": 24, "morning_window": "07:30-10:30", "noon_window": "11:30-14:00", "night_window": "22:00-23:59"},
+        "goal": {"cooldown_min": 480},
+        "emotion": {"cooldown_min": 360, "msg_range_min": 3, "msg_range_max": 12, "keywords": "好累,烦,崩溃,难受,睡不着,焦虑,压力,抑郁"},
+        "location": {"cooldown_hours": 24, "status_fresh_min": 30, "require_recent_state_change": True, "state_change_within_hours": 2},
+        "activity": {"cooldown_min": 360, "summary_slots": 6, "keywords": "连续,长时间,系统设置,刷视频,游戏,停留"},
+        "festival": {"cooldown_min": 525600, "custom_dates": "01-01,02-14,03-08,05-01,05-20,05-21,06-01,08-19,10-01,12-24,12-25,12-31"},
+        "promise": {"cooldown_min": 480, "msg_range_min": 10, "msg_range_max": 40, "min_hours_since_promise": 2, "keywords": "我会,提醒,问你,再联系你,等会儿我来问你,稍后我提醒你"},
+    }
+
+def _get_proactive_cfg() -> dict:
+    base = _default_proactive_config()
+    custom = SETTINGS.get("proactive_config", {}) or {}
+    if not isinstance(custom, dict):
+        return base
+    for k, v in custom.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            base[k].update(v)
+    return base
+
+def _in_time_window(window_text: str) -> bool:
+    try:
+        now = datetime.now().strftime("%H:%M")
+        if not window_text or "-" not in window_text:
+            return True
+        start, end = [x.strip() for x in window_text.split("-", 1)]
+        if start <= end:
+            return start <= now <= end
+        return now >= start or now <= end
+    except Exception:
+        return True
+
+def _kw_pattern(csv_text: str) -> str:
+    kws = [k.strip() for k in (csv_text or "").split(",") if k.strip()]
+    return "(" + "|".join(re.escape(k) for k in kws) + ")" if kws else ""
+
+def _cooldown_sec(cfg: dict, default_hours: float) -> int:
+    """优先读取 cooldown_hours；兼容旧 cooldown_min。"""
+    if "cooldown_hours" in cfg:
+        h = float(cfg.get("cooldown_hours", default_hours))
+    elif "cooldown_min" in cfg:
+        h = float(cfg.get("cooldown_min", default_hours * 60)) / 60.0
+    else:
+        h = default_hours
+    h = max(0.1, min(24 * 365, h))
+    return int(h * 3600)
+
+
+async def _send_proactive_message(conv_id: str, model_key: str, trigger_name: str, trigger_prompt: str):
+    wb = load_worldbook()
+    user_name = wb.get("user_name", "你")
+    prefix = []
+    if wb.get("ai_persona"):
+        prefix.append({"role": "user", "content": f"[系统设定 - AI人设]\n{wb['ai_persona']}"})
+        prefix.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
+    if wb.get("user_persona"):
+        prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
+        prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
+    if wb.get("system_prompt"):
+        prefix.append({"role": "user", "content": f"[系统提示]\n{wb['system_prompt']}"})
+        prefix.append({"role": "assistant", "content": "收到，我会遵循这些规则。"})
+
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT role, content, attachments FROM messages WHERE conv_id=? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 12",
+            (conv_id,),
+        )
+        rows = await cur.fetchall()
+    history = []
+    for r in reversed(rows):
+        d = dict(r)
+        try:
+            d["attachments"] = json.loads(d.get("attachments") or "[]") if d.get("attachments") else []
+        except Exception:
+            d["attachments"] = []
+        history.append(d)
+    now_str = datetime.now().strftime("%Y年%m月%d日 %H:%M")
+    prompt = (
+        f"[主动联系触发:{trigger_name}]\n当前时间：{now_str}\n"
+        f"请你主动联系{user_name}，语气自然、简短、关心，不要提“系统触发/规则/监控”。\n"
+        f"{trigger_prompt}\n"
+        "限制：1~2句话，不要连续追问，不要命令口吻。"
+    )
+    messages = prefix + history + [{"role": "user", "content": prompt}]
+
+    full_text = ""
+    try:
+        _temp = SETTINGS.get("temperature")
+        async for chunk in stream_ai(messages, model_key, temperature=_temp):
+            full_text += chunk
+    except Exception as e:
+        log.error("proactive stream error: %s", e)
+        return False
+    full_text = full_text.strip()
+    if not full_text:
+        return False
+
+    now = time.time()
+    msg_id = f"msg_{int(now*1000)}_pro"
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO messages (id, conv_id, role, content, created_at, attachments) VALUES (?,?,?,?,?,?)",
+            (msg_id, conv_id, "assistant", full_text, now, "[]"),
+        )
+        await db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
+        await db.commit()
+    await manager.broadcast({"type": "msg_created", "data": {
+        "id": msg_id, "conv_id": conv_id, "role": "assistant", "content": full_text, "created_at": now, "attachments": []
+    }})
+    from routes.files import export_conversation
+    await export_conversation(conv_id)
+    return True
+
+
+async def _run_proactive_triggers():
+    if not SETTINGS.get("proactive_enabled", True):
+        return
+    if SETTINGS.get("proactive_quiet_enabled", True):
+        qwin = str(SETTINGS.get("proactive_quiet_window", "00:30-08:30"))
+        if _in_time_window(qwin):
+            return
+    conv_id, model_key = await _latest_conv_and_model()
+    if not conv_id:
+        return
+
+    now = time.time()
+    last_user = await _last_msg_ts("user")
+    if last_user <= 0:
+        return
+    elapsed_h = (now - last_user) / 3600.0
+
+    cfg = _get_proactive_cfg()
+
+    # 1) 长时间无互动
+    if SETTINGS.get("proactive_inactivity_enabled", True):
+        c = cfg["inactivity"]
+        h = float(c.get("hours", SETTINGS.get("proactive_inactivity_hours", 6)))
+        cd = _cooldown_sec(c, 12)
+        if elapsed_h >= h and not await _fired_recent("inactivity", cd):
+            if await _send_proactive_message(conv_id, model_key, "长时间无互动", f"对方大约{int(elapsed_h)}小时没有发消息了。"):
+                await _mark_fired("inactivity", conv_id, f"{elapsed_h:.1f}h")
+                return
+
+    # 2) 作息节点
+    if SETTINGS.get("proactive_routine_enabled", True):
+        c = cfg["routine"]
+        hhmm = datetime.now().strftime("%H:%M")
+        day = datetime.now().strftime("%Y%m%d")
+        slot = None
+        if _in_time_window(str(c.get("morning_window", "07:30-10:30"))):
+            slot = "morning"
+        elif _in_time_window(str(c.get("noon_window", "11:30-14:00"))):
+            slot = "noon"
+        elif _in_time_window(str(c.get("night_window", "22:00-23:59"))):
+            slot = "night"
+        if slot:
+            key = f"routine_{slot}_{day}"
+            cd = _cooldown_sec(c, 48)
+            if not await _fired_recent(key, cd):
+                tip = {"morning": "早安问候", "noon": "午间关心", "night": "晚安关心"}[slot]
+                if await _send_proactive_message(conv_id, model_key, "作息节点", tip):
+                    await _mark_fired(key, conv_id, slot)
+                    return
+
+    # 3) 目标跟进（未完成记忆）
+    if SETTINGS.get("proactive_goal_enabled", True):
+        c = cfg["goal"]
+        async with get_db() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT content FROM memories WHERE unresolved=1 ORDER BY importance DESC, created_at DESC LIMIT 1")
+            row = await cur.fetchone()
+        cd = _cooldown_sec(c, 8)
+        if row and not await _fired_recent("goal_followup", cd):
+            if await _send_proactive_message(conv_id, model_key, "目标跟进", f"之前有未完成事项：{row['content']}，温柔问一下进展。"):
+                await _mark_fired("goal_followup", conv_id, row["content"])
+                return
+
+    # 4) 情绪风险
+    if SETTINGS.get("proactive_emotion_enabled", True):
+        c = cfg["emotion"]
+        mn = max(1, int(c.get("msg_range_min", 3)))
+        mx = max(mn, int(c.get("msg_range_max", 12)))
+        async with get_db() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT content FROM messages WHERE role='user' ORDER BY created_at DESC LIMIT ?", (mx,))
+            rows = await cur.fetchall()
+        if len(rows) >= mn:
+            text = "\n".join([r["content"] for r in rows if r["content"]])
+            pat = _kw_pattern(str(c.get("keywords", "")))
+            cd = _cooldown_sec(c, 6)
+            if pat and re.search(pat, text) and not await _fired_recent("emotion_risk", cd):
+                if await _send_proactive_message(conv_id, model_key, "情绪关怀", "对方最近情绪可能不太好，先共情再给一个很小的建议。"):
+                    await _mark_fired("emotion_risk", conv_id, "keywords")
+                    return
+
+    # 5) 位置场景
+    if SETTINGS.get("proactive_location_enabled", True):
+        c = cfg["location"]
+        try:
+            from location import load_location_status, load_location_config
+            cfg_loc = load_location_config()
+            st = load_location_status()
+            is_enabled = cfg_loc.get("enabled")
+            is_outside = st.get("state") == "outside"
+            updated_at = float(st.get("updated_at", 0) or 0)
+            state_changed_at = float(st.get("state_changed_at", 0) or 0)
+            fresh_min = max(1, int(c.get("status_fresh_min", 30)))
+            require_recent_change = bool(c.get("require_recent_state_change", True))
+            change_within_h = max(0.1, float(c.get("state_change_within_hours", 2)))
+            fresh_ok = updated_at > 0 and (time.time() - updated_at) <= fresh_min * 60
+            change_ok = (not require_recent_change) or (
+                state_changed_at > 0 and (time.time() - state_changed_at) <= change_within_h * 3600
+            )
+            if is_enabled and is_outside and fresh_ok and change_ok:
+                key = "location_outside_" + datetime.now().strftime("%Y%m%d")
+                cd = _cooldown_sec(c, 24)
+                if not await _fired_recent(key, cd):
+                    if await _send_proactive_message(conv_id, model_key, "外出场景", f"对方当前在外出状态，地址信息：{st.get('address','未知')}。"):
+                        await _mark_fired(key, conv_id, "outside")
+                        return
+        except Exception:
+            pass
+
+    # 6) 设备高强度
+    if SETTINGS.get("proactive_activity_enabled", True):
+        c = cfg["activity"]
+        try:
+            slots = max(1, min(12, int(c.get("summary_slots", 6))))
+            summary = get_activity_summary_for_prompt(slots) or ""
+            pat = _kw_pattern(str(c.get("keywords", "")))
+            cd = _cooldown_sec(c, 6)
+            if pat and re.search(pat, summary) and not await _fired_recent("activity_overuse", cd):
+                if await _send_proactive_message(conv_id, model_key, "设备高强度使用", "最近设备使用时长偏长，提醒喝水和活动肩颈。"):
+                    await _mark_fired("activity_overuse", conv_id, "activity")
+                    return
+        except Exception:
+            pass
+
+    # 7) 节日触发
+    if SETTINGS.get("proactive_festival_enabled", True):
+        c = cfg["festival"]
+        md = datetime.now().strftime("%m-%d")
+        festivals = {"01-01": "新年", "02-14": "情人节", "05-20": "520", "10-01": "国庆节", "12-24": "平安夜", "12-25": "圣诞节"}
+        custom = [x.strip() for x in str(c.get("custom_dates", "")).split(",") if x.strip()]
+        if md in festivals or md in custom:
+            fest_name = festivals.get(md, f"{md}节日")
+            key = "festival_" + md + "_" + datetime.now().strftime("%Y")
+            cd = _cooldown_sec(c, 24 * 365)
+            if not await _fired_recent(key, cd):
+                if await _send_proactive_message(conv_id, model_key, "节日问候", f"今天是{fest_name}，发送一句有仪式感的问候。"):
+                    await _mark_fired(key, conv_id, fest_name)
+                    return
+
+    # 8) 承诺跟进（弱规则）
+    if SETTINGS.get("proactive_promise_enabled", True):
+        c = cfg["promise"]
+        mn = max(1, int(c.get("msg_range_min", 10)))
+        mx = max(mn, int(c.get("msg_range_max", 40)))
+        minh = float(c.get("min_hours_since_promise", 2))
+        pat = _kw_pattern(str(c.get("keywords", "")))
+        if not pat:
+            return
+        async with get_db() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT content, created_at FROM messages WHERE role='assistant' ORDER BY created_at DESC LIMIT ?", (mx,))
+            rows = await cur.fetchall()
+        if len(rows) < mn:
+            return
+        cd = _cooldown_sec(c, 8)
+        for r in rows:
+            txt = r["content"] or ""
+            if re.search(pat, txt):
+                if now - float(r["created_at"]) >= minh * 3600 and not await _fired_recent("promise_followup", cd):
+                    if await _send_proactive_message(conv_id, model_key, "承诺跟进", "你之前答应过稍后跟进，现在自然回访一下。"):
+                        await _mark_fired("promise_followup", conv_id, txt[:80])
+                        return
+                break

@@ -27,6 +27,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+import android.view.View;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.appcompat.app.AlertDialog;
@@ -46,6 +47,9 @@ public class WebViewActivity extends AppCompatActivity {
 
     private static final int REQ_AUDIO = 1001;
     private static final int REQ_CAMERA = 1002;
+    private static final String PREFS = "aion_prefs";
+    private static final String KEY_URL = "saved_url";
+    private static final String URL_HOME = "http://192.168.0.101:8000/chat";
     private WebView webView;
     private String targetUrl;
     private boolean pageLoaded = false;
@@ -142,10 +146,20 @@ public class WebViewActivity extends AppCompatActivity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);               // localStorage
         s.setDatabaseEnabled(true);
+        // 开启默认 HTTP 缓存策略，减少页面切换时图片重复加载闪烁
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setLoadsImagesAutomatically(true);
+        s.setBlockNetworkImage(false);
         s.setMediaPlaybackRequiresUserGesture(false); // 允许自动播放音频（TTS / 闹铃）
         s.setAllowFileAccess(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         s.setUserAgentString(s.getUserAgentString() + " AionChatApp/1.0");
+        // 提前栅格化离屏内容，降低切页瞬间白闪
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            s.setOffscreenPreRaster(true);
+        }
+        // 明确使用硬件加速渲染
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
         // 让 WebView 的渲染和真实 Chrome 保持一致
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -164,7 +178,7 @@ public class WebViewActivity extends AppCompatActivity {
                         pageLoaded = false;
                         webView.loadUrl(targetUrl);
                     } else if ("switch".equals(host)) {
-                        SharedPreferences prefs = getSharedPreferences("aion_prefs", MODE_PRIVATE);
+                        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
                         prefs.edit().putBoolean("auto_connect", false).apply();
                         startActivity(new Intent(WebViewActivity.this, LauncherActivity.class));
                         finish();
@@ -173,7 +187,7 @@ public class WebViewActivity extends AppCompatActivity {
                 }
                 // 站内导航留在 WebView，外部链接用浏览器打开
                 String urlHost = request.getUrl().getHost();
-                if (urlHost != null && (urlHost.contains("192.168.") || urlHost.contains("100.117.") || urlHost.contains("localhost") || urlHost.contains("127.0.0.1"))) {
+                if (urlHost != null && (urlHost.contains("192.168.") || urlHost.contains("100.") || urlHost.contains("localhost") || urlHost.contains("127.0.0.1"))) {
                     return false;
                 }
                 startActivity(new Intent(Intent.ACTION_VIEW, request.getUrl()));
@@ -272,11 +286,20 @@ public class WebViewActivity extends AppCompatActivity {
         });
 
         // 加载目标 URL
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         targetUrl = getIntent().getStringExtra("url");
         if (targetUrl == null || targetUrl.isEmpty()) {
-            targetUrl = "http://192.168.1.92:8080/chat";
+            targetUrl = prefs.getString(KEY_URL, URL_HOME);
         }
+        targetUrl = normalizeUrl(targetUrl);
+        prefs.edit().putString(KEY_URL, targetUrl).apply();
         webView.loadUrl(targetUrl);
+    }
+
+    private String normalizeUrl(String url) {
+        if (url == null || url.isEmpty()) return URL_HOME;
+        if (url.contains("127.0.0.1") || url.contains("localhost")) return URL_HOME;
+        return url;
     }
 
     /**

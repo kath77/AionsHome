@@ -176,7 +176,22 @@ async function forceSync() {
   btn.disabled = true;
   btn.textContent = "⏳ 同步中...";
   try {
-    const r = await api("POST", "/api/location/force-sync");
+    let r = await api("POST", "/api/location/force-sync");
+    // 若当前位置未知，尝试用手动输入坐标先上报一次再同步
+    if (!r.ok && String(r.error || "").includes("当前位置未知")) {
+      const manualLng = parseFloat($("lp_home_lng").value);
+      const manualLat = parseFloat($("lp_home_lat").value);
+      if (!isNaN(manualLng) && !isNaN(manualLat)) {
+        await api("POST", "/api/location/heartbeat", {
+          lng: manualLng,
+          lat: manualLat,
+          accuracy: 30,
+          is_gcj02: true,
+          force: true
+        });
+        r = await api("POST", "/api/location/force-sync");
+      }
+    }
     if (r.ok) {
       btn.textContent = "✅ 已同步";
       const s = await api("GET", "/api/location/status");
@@ -192,6 +207,21 @@ async function forceSync() {
 }
 
 async function setHomeLoc() {
+  // 优先使用手动输入的经纬度
+  const manualLng = parseFloat($("lp_home_lng").value);
+  const manualLat = parseFloat($("lp_home_lat").value);
+  if (!isNaN(manualLng) && !isNaN(manualLat)) {
+    try {
+      await api("PUT", "/api/location/config", { home_lng: manualLng, home_lat: manualLat });
+      $("lpCfgMsg").textContent = `✅ 已使用手动坐标设为家：${manualLng}, ${manualLat}`;
+      setTimeout(() => $("lpCfgMsg").textContent = "", 2500);
+      return;
+    } catch (e) {
+      $("lpCfgMsg").textContent = "❌ 手动坐标保存失败: " + e.message;
+      return;
+    }
+  }
+
   try {
     const r = await api("POST", "/api/location/set-home");
     if (r.ok) { $("lp_home_lng").value = r.home_lng; $("lp_home_lat").value = r.home_lat; $("lpCfgMsg").textContent = "✅ 已设为家：" + (r.address || `${r.home_lng},${r.home_lat}`); return; }

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 心语 API：列表查询 + 删除
 """

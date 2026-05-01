@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 文件管理路由：上传、聊天记录文件 CRUD、导出
 """

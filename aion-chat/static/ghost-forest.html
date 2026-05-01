@@ -2420,8 +2420,14 @@ async function generateFinale() {
 
 // ── 简易 Markdown ────────────────────────
 function simpleMd(text) {
-  if (!text) return '';
-  return text
+  if (text === null || text === undefined) return '';
+  let safeText = text;
+  if (typeof safeText !== 'string') {
+    try { safeText = JSON.stringify(safeText, null, 2); }
+    catch (e) { safeText = String(safeText); }
+  }
+  if (!safeText) return '';
+  return safeText
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')

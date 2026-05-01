@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 设备活动日志 API：上报、查询日期列表、查询指定日期日志、查询最近 N 小时日志
 """

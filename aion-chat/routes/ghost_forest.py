@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 奥罗斯幽林 — API 路由
 """

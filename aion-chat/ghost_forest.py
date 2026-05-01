@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 奥罗斯幽林 — 核心游戏逻辑
 独立的 TRPG 游戏引擎，使用 JSON 文件存储每局游戏状态

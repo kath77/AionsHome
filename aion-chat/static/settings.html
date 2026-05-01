@@ -24,8 +24,81 @@
     <input class="form-input" type="text" id="sfKeyInput" placeholder="输入硅基流动 API Key..." autocomplete="off" style="font-family:monospace">
     <label class="form-label">中转站 API Key</label>
     <input class="form-input" type="text" id="aiproKeyInput" placeholder="输入中转站 API Key..." autocomplete="off" style="font-family:monospace">
+    <label class="form-label">中转站 Base URL</label>
+    <input class="form-input" type="text" id="aiproBaseUrlInput" placeholder="例如 https://key.simpleai.com.cn/v1" autocomplete="off" style="font-family:monospace">
     <label class="form-label">网易云 MUSIC_U Cookie（VIP 点歌）</label>
     <input class="form-input" type="text" id="neteaseMusicUInput" placeholder="浏览器 F12 → Cookie → MUSIC_U" autocomplete="off" style="font-family:monospace">
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin:10px 0 0 0">
+      <span>礼物默认使用 HTML 形态</span><input id="gift_prefer_html" type="checkbox">
+    </div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+    <label class="form-label">主动联系触发</label>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>总开关</span><input id="proactive_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>长时间无互动</span><input id="proactive_inactivity_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>作息节点</span><input id="proactive_routine_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>目标跟进</span><input id="proactive_goal_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>情绪关怀</span><input id="proactive_emotion_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>位置场景</span><input id="proactive_location_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>设备高强度提醒</span><input id="proactive_activity_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>节日问候</span><input id="proactive_festival_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>承诺跟进</span><input id="proactive_promise_enabled" type="checkbox"></div>
+    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-bottom:8px"><span>静默窗口（不主动联系）</span><input id="proactive_quiet_enabled" type="checkbox"></div>
+    <label class="form-label">静默时间窗（HH:MM-HH:MM）</label>
+    <input class="form-input" type="text" id="proactive_quiet_window" value="00:30-08:30">
+    <label class="form-label">无互动触发阈值（小时）</label>
+    <input class="form-input" type="number" id="proactive_inactivity_hours" min="1" max="72" step="1" value="6">
+    <label class="form-label">高级参数（冷却/时间窗/关键词/消息范围）</label>
+    <label class="form-label">情绪关怀：冷却(小时，可小数)</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="number" id="emoCooldown" min="0.1" max="8760" step="0.1" value="6">
+      <div></div>
+    </div>
+    <label class="form-label">情绪关怀：消息条数范围(min-max)</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="number" id="emoMsgMin" min="1" max="100" value="3">
+      <input class="form-input" type="number" id="emoMsgMax" min="1" max="100" value="12">
+    </div>
+    <label class="form-label">情绪关键词（逗号分隔）</label>
+    <input class="form-input" type="text" id="emoKeywords" value="好累,烦,崩溃,难受,睡不着,焦虑,压力,抑郁">
+
+    <label class="form-label">承诺跟进：冷却(小时，可小数)</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="number" id="promiseCooldown" min="0.1" max="8760" step="0.1" value="8">
+      <div></div>
+    </div>
+    <label class="form-label">承诺跟进：消息条数范围(min-max)</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="number" id="promiseMsgMin" min="1" max="200" value="10">
+      <input class="form-input" type="number" id="promiseMsgMax" min="1" max="200" value="40">
+    </div>
+    <label class="form-label">承诺最小间隔（小时）</label>
+    <input class="form-input" type="number" id="promiseMinHours" min="0.5" max="72" step="0.5" value="2">
+    <label class="form-label">承诺关键词（逗号分隔）</label>
+    <input class="form-input" type="text" id="promiseKeywords" value="我会,提醒,问你,再联系你,等会儿我来问你,稍后我提醒你">
+
+    <label class="form-label">活动提醒：冷却(小时，可小数) / 采样窗口(10分钟×N)</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="number" id="actCooldown" min="0.1" max="8760" step="0.1" value="6">
+      <input class="form-input" type="number" id="actSlots" min="1" max="12" value="6">
+    </div>
+    <label class="form-label">活动关键词（逗号分隔）</label>
+    <input class="form-input" type="text" id="actKeywords" value="连续,长时间,系统设置,刷视频,游戏,停留">
+    <label class="form-label">作息节点：冷却(小时，可小数)</label>
+    <input class="form-input" type="number" id="routineCooldown" min="0.1" max="8760" step="0.1" value="24">
+    <label class="form-label">作息时段：早/午/晚（HH:MM-HH:MM）</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="text" id="routineMorning" value="07:30-10:30">
+      <input class="form-input" type="text" id="routineNoon" value="11:30-14:00">
+      <input class="form-input" type="text" id="routineNight" value="22:00-23:59">
+    </div>
+    <label class="form-label">位置场景：冷却(小时，可小数)</label>
+    <input class="form-input" type="number" id="locCooldown" min="0.1" max="8760" step="0.1" value="24">
+    <label class="form-label">节日问候：冷却(小时，可小数) / 自定义日期(mm-dd,逗号分隔)</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <input class="form-input" type="number" id="festCooldown" min="0.1" max="87600" step="0.1" value="8760">
+      <input class="form-input" type="text" id="festDates" value="01-01,02-14,03-08,05-01,05-20,05-21,06-01,08-19,10-01,12-24,12-25,12-31">
+    </div>
+
     <div class="btn-row">
       <button class="btn-cancel" onclick="location.href='/'">取消</button>
       <button class="btn-save" onclick="saveSettings()">保存</button>
@@ -42,7 +115,47 @@ connectCommonWS();
   $("geminiFreeKeyInput").value = s.gemini_free_key || "";
   $("sfKeyInput").value = s.siliconflow_key || "";
   $("aiproKeyInput").value = s.aipro_key || "";
+  $("aiproBaseUrlInput").value = s.aipro_base_url || "https://key.simpleai.com.cn/v1";
   $("neteaseMusicUInput").value = s.netease_music_u || "";
+  $("gift_prefer_html").checked = (s.gift_prefer_html !== false);
+  $("proactive_enabled").checked = !!s.proactive_enabled;
+  $("proactive_inactivity_enabled").checked = !!s.proactive_inactivity_enabled;
+  $("proactive_routine_enabled").checked = !!s.proactive_routine_enabled;
+  $("proactive_goal_enabled").checked = !!s.proactive_goal_enabled;
+  $("proactive_emotion_enabled").checked = !!s.proactive_emotion_enabled;
+  $("proactive_location_enabled").checked = !!s.proactive_location_enabled;
+  $("proactive_activity_enabled").checked = !!s.proactive_activity_enabled;
+  $("proactive_festival_enabled").checked = !!s.proactive_festival_enabled;
+  $("proactive_promise_enabled").checked = !!s.proactive_promise_enabled;
+  $("proactive_quiet_enabled").checked = !!s.proactive_quiet_enabled;
+  $("proactive_quiet_window").value = s.proactive_quiet_window || "00:30-08:30";
+  $("proactive_inactivity_hours").value = s.proactive_inactivity_hours || 6;
+  const pc = s.proactive_config || {};
+  const emo = pc.emotion || {};
+  const prm = pc.promise || {};
+  const act = pc.activity || {};
+  const routine = pc.routine || {};
+  const loc = pc.location || {};
+  const fest = pc.festival || {};
+  $("emoCooldown").value = (emo.cooldown_hours ?? ((emo.cooldown_min ?? 360) / 60));
+  $("emoMsgMin").value = emo.msg_range_min ?? 3;
+  $("emoMsgMax").value = emo.msg_range_max ?? 12;
+  $("emoKeywords").value = emo.keywords ?? "好累,烦,崩溃,难受,睡不着,焦虑,压力,抑郁";
+  $("promiseCooldown").value = (prm.cooldown_hours ?? ((prm.cooldown_min ?? 480) / 60));
+  $("promiseMsgMin").value = prm.msg_range_min ?? 10;
+  $("promiseMsgMax").value = prm.msg_range_max ?? 40;
+  $("promiseMinHours").value = prm.min_hours_since_promise ?? 2;
+  $("promiseKeywords").value = prm.keywords ?? "我会,提醒,问你,再联系你,等会儿我来问你,稍后我提醒你";
+  $("actCooldown").value = (act.cooldown_hours ?? ((act.cooldown_min ?? 360) / 60));
+  $("actSlots").value = act.summary_slots ?? 6;
+  $("actKeywords").value = act.keywords ?? "连续,长时间,系统设置,刷视频,游戏,停留";
+  $("routineCooldown").value = (routine.cooldown_hours ?? ((routine.cooldown_min ?? 1440) / 60));
+  $("routineMorning").value = routine.morning_window ?? "07:30-10:30";
+  $("routineNoon").value = routine.noon_window ?? "11:30-14:00";
+  $("routineNight").value = routine.night_window ?? "22:00-23:59";
+  $("locCooldown").value = (loc.cooldown_hours ?? ((loc.cooldown_min ?? 1440) / 60));
+  $("festCooldown").value = (fest.cooldown_hours ?? ((fest.cooldown_min ?? 525600) / 60));
+  $("festDates").value = fest.custom_dates ?? "01-01,02-14,03-08,05-01,05-20,05-21,06-01,08-19,10-01,12-24,12-25,12-31";
 })();
 
 async function saveSettings() {
@@ -51,7 +164,55 @@ async function saveSettings() {
     gemini_free_key: $("geminiFreeKeyInput").value.trim(),
     siliconflow_key: $("sfKeyInput").value.trim(),
     aipro_key: $("aiproKeyInput").value.trim(),
-    netease_music_u: $("neteaseMusicUInput").value.trim()
+    aipro_base_url: $("aiproBaseUrlInput").value.trim(),
+    netease_music_u: $("neteaseMusicUInput").value.trim(),
+    gift_prefer_html: $("gift_prefer_html").checked,
+    proactive_enabled: $("proactive_enabled").checked,
+    proactive_inactivity_enabled: $("proactive_inactivity_enabled").checked,
+    proactive_routine_enabled: $("proactive_routine_enabled").checked,
+    proactive_goal_enabled: $("proactive_goal_enabled").checked,
+    proactive_emotion_enabled: $("proactive_emotion_enabled").checked,
+    proactive_location_enabled: $("proactive_location_enabled").checked,
+    proactive_activity_enabled: $("proactive_activity_enabled").checked,
+    proactive_festival_enabled: $("proactive_festival_enabled").checked,
+    proactive_promise_enabled: $("proactive_promise_enabled").checked,
+    proactive_quiet_enabled: $("proactive_quiet_enabled").checked,
+    proactive_quiet_window: $("proactive_quiet_window").value.trim() || "00:30-08:30",
+    proactive_inactivity_hours: Number($("proactive_inactivity_hours").value || 6),
+    proactive_config: {
+      inactivity: { hours: Number($("proactive_inactivity_hours").value || 6) },
+      emotion: {
+        cooldown_hours: Number($("emoCooldown").value || 6),
+        msg_range_min: Number($("emoMsgMin").value || 3),
+        msg_range_max: Number($("emoMsgMax").value || 12),
+        keywords: $("emoKeywords").value.trim()
+      },
+      promise: {
+        cooldown_hours: Number($("promiseCooldown").value || 8),
+        msg_range_min: Number($("promiseMsgMin").value || 10),
+        msg_range_max: Number($("promiseMsgMax").value || 40),
+        min_hours_since_promise: Number($("promiseMinHours").value || 2),
+        keywords: $("promiseKeywords").value.trim()
+      },
+      activity: {
+        cooldown_hours: Number($("actCooldown").value || 6),
+        summary_slots: Number($("actSlots").value || 6),
+        keywords: $("actKeywords").value.trim()
+      },
+      routine: {
+        cooldown_hours: Number($("routineCooldown").value || 24),
+        morning_window: $("routineMorning").value.trim() || "07:30-10:30",
+        noon_window: $("routineNoon").value.trim() || "11:30-14:00",
+        night_window: $("routineNight").value.trim() || "22:00-23:59"
+      },
+      location: {
+        cooldown_hours: Number($("locCooldown").value || 24)
+      },
+      festival: {
+        cooldown_hours: Number($("festCooldown").value || 8760),
+        custom_dates: $("festDates").value.trim()
+      }
+    }
   });
   showToast("✅ 已保存");
 }

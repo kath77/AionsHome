@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 语音唤醒路由：开关控制 + 状态查询 + AI说话通知 + 远程ASR
 """

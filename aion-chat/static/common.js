@@ -2,11 +2,19 @@
 
 const $ = id => document.getElementById(id);
 
-// 在 iframe 子页面浮层中时，返回按钮改为关闭浮层回到聊天页
+// 在 iframe 子页面浮层中时，返回按钮改为回到主页
 if (window.parent !== window) {
   document.addEventListener('DOMContentLoaded', () => {
     const backBtn = document.querySelector('.top-bar .back-btn');
-    if (backBtn) backBtn.onclick = () => window.parent.closeSubPage();
+    if (backBtn) {
+      backBtn.onclick = () => {
+        try {
+          window.parent.location.href = '/';
+        } catch (e) {
+          window.location.href = '/';
+        }
+      };
+    }
   });
 }
 
@@ -153,6 +161,10 @@ function _buildGiftOverlay(gift) {
   const old = document.getElementById('giftOverlay');
   if (old) old.remove();
 
+  const isHtmlGift = (gift.gift_type === 'html');
+  const mediaHtml = isHtmlGift
+    ? `<div class="gift-image" style="background:#fff;border-radius:16px;overflow:hidden"><iframe style="width:320px;height:320px;border:none;display:block;background:#fff;pointer-events:none" sandbox="allow-same-origin" src="/api/gift/${gift.id}/html"></iframe></div>`
+    : `<img class="gift-image" src="/uploads/${gift.image_path}" alt="礼物" />`;
   const overlay = document.createElement('div');
   overlay.id = 'giftOverlay';
   overlay.className = 'gift-overlay';
@@ -184,7 +196,7 @@ function _buildGiftOverlay(gift) {
       <div class="gift-reveal" id="giftReveal" style="display:none">
         <div class="confetti-container" id="confettiContainer"></div>
         <div class="gift-image-wrap" id="giftImageWrap" onclick="_showGiftMessage()">
-          <img class="gift-image" src="/uploads/${gift.image_path}" alt="礼物" />
+          ${mediaHtml}
         </div>
         <div class="gift-message-wrap" id="giftMessageWrap" style="display:none">
           <p class="gift-message-text">${escHtml(gift.message)}</p>
